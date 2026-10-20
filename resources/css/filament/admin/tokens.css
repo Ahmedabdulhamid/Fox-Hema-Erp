@@ -1,0 +1,48 @@
+@theme {
+    --font-sans: 'Segoe UI', Tahoma, Arial, sans-serif;
+    --color-brand-primary: #12b8a6;
+    --color-brand-ink: #132441;
+    --color-brand-canvas: #f4f7fb;
+}
+:root {
+    --fox-sidebar: #132441;
+    --fox-sidebar-hover: #1c3556;
+    --fox-primary: #12b8a6;
+    --fox-primary-dark: #07998c;
+    --fox-primary-soft: #e0f7f3;
+    --fox-action: #087f74;
+    --fox-violet: #7864d9;
+    --fox-ink: #15243d;
+    --fox-muted: #65758d;
+    --fox-canvas: #f4f7fb;
+    --fox-surface: #ffffff;
+    --fox-table-head: #f0f5fb;
+    --fox-border: #dce4ed;
+    --fox-input-border: #94a3b8;
+    --fox-input-hover: #64748b;
+    --fox-input-focus: #0d9488;
+    --fox-input-disabled: #edf2f7;
+    --fox-danger: #dc2626;
+    --fox-success: #15803d;
+    --fox-warning: #d97706;
+    --fox-radius: .75rem;
+    --fox-control-radius: .5rem;
+    --fox-shadow: 0 2px 8px rgb(19 36 65 / 4%);
+}
+html.dark {
+    color-scheme: dark;
+    --fox-surface: #17263c;
+    --fox-canvas: #0e1b2f;
+    --fox-table-head: #1c304a;
+    --fox-primary-soft: #163e44;
+    --fox-primary-dark: #5eead4;
+    --fox-ink: #edf3fa;
+    --fox-muted: #a4b4cb;
+    --fox-border: #354962;
+    --fox-input-border: #71839b;
+    --fox-input-hover: #a4b4cb;
+    --fox-input-focus: #5eead4;
+    --fox-input-disabled: #203149;
+    --fox-danger: #f87171;
+    --fox-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+}

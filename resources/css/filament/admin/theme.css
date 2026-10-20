@@ -1,0 +1,159 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+@import './tokens.css';
+@import './workspaces.css';
+@import './commercial-lines.css';
+
+/* Future module resources and Blade components share the compiled design system. */
+@source '../../../../app/**/*';
+@source '../../../views/**/*';
+
+html { --font-family: var(--font-sans); }
+body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family: var(--font-sans); }
+.fi-main, .fi-page, .fi-sc, .fi-sc-component, .fi-in-entry { min-width: 0; }
+.fi-main { max-width: 100%; padding-inline: clamp(.85rem, 1.6vw, 1.5rem); }
+.fi-page { gap: 1.25rem; }
+.fi-header { align-items: end; gap: 1rem; }
+.fi-header-heading { color: var(--fox-ink); font-size: clamp(1.35rem, 1.8vw, 1.7rem); font-weight: 750; letter-spacing: -.02em; }
+.fi-header-subheading { color: var(--fox-muted); font-size: .85rem; }
+.fi-breadcrumbs { margin-block-end: .35rem; }
+.fi-breadcrumbs-item-label { color: var(--fox-muted); font-size: .75rem; }
+
+/* Preserve Filament's responsive positioning and collapse transitions. */
+.fi-sidebar, .fi-sidebar-header { background: var(--fox-sidebar); }
+.fi-sidebar-header { border-block-end: 1px solid rgb(255 255 255 / 8%); box-shadow: none; padding-inline: 1rem; }
+.fi-sidebar .fi-logo { max-width: 12.5rem; height: auto; }
+.fi-sidebar-nav { padding: .65rem .75rem; }
+.fi-sidebar .fi-sidebar-group-label { color: #a4b4cb; font-size: .75rem; }
+.fi-sidebar .fi-sidebar-item-btn { min-height: 2.55rem; border-radius: .5rem; padding-inline: .75rem; transition: background-color .15s; }
+.fi-sidebar .fi-sidebar-item-label { color: #e5ecf6; font-size: .85rem; font-weight: 500; }
+.fi-sidebar .fi-sidebar-item-icon { color: #c5d2e5; width: 1.25rem; height: 1.25rem; }
+.fi-sidebar .fi-sidebar-item-btn:hover { background: var(--fox-sidebar-hover); }
+.fi-sidebar .fi-sidebar-item.fi-active > .fi-sidebar-item-btn,
+.fi-sidebar .fi-sidebar-item-btn[aria-current='page'] { background: var(--fox-action); }
+.fi-sidebar .fi-active > .fi-sidebar-item-btn :is(.fi-sidebar-item-label, .fi-sidebar-item-icon) { color: white; }
+.fi-topbar { background: var(--fox-surface); border-block-end: 1px solid var(--fox-border); box-shadow: var(--fox-shadow); min-height: 3.75rem; gap: .6rem; }
+.fi-global-search-field { width: clamp(12rem, 25vw, 30rem); }
+
+/* One fixed-width border owns focus. Vendor ring utilities live in lower CSS layers. */
+.fi-body .fi-input-wrp,
+.fox-location-switcher select,
+.fox-permission-search,
+.fox-public-form input {
+    border: 1.5px solid var(--fox-input-border);
+    border-radius: var(--fox-control-radius);
+    background: var(--fox-surface);
+    color: var(--fox-ink);
+    min-height: 2.5rem;
+    box-shadow: none;
+    outline: none;
+    transition: border-color .15s;
+}
+.fi-body .fi-input-wrp:not(.fi-disabled):hover,
+.fox-location-switcher select:hover,
+.fox-permission-search:hover,
+.fox-public-form input:hover { border-color: var(--fox-input-hover); }
+.fi-body .fi-input-wrp:focus-within,
+.fox-location-switcher select:focus,
+.fox-permission-search:focus-within,
+.fox-public-form input:focus {
+    border-color: var(--fox-input-focus);
+    box-shadow: none;
+    outline: none;
+}
+.fi-body .fi-input-wrp.fi-disabled,
+.fi-body .fi-input-wrp:has(:disabled) { background: var(--fox-input-disabled); border-style: dashed; color: var(--fox-muted); }
+.fi-body .fi-input-wrp:has(input[readonly]),
+.fi-body .fi-input-wrp:has(textarea[readonly]) { background: var(--fox-canvas); }
+.fi-body .fi-input-wrp.fi-invalid,
+.fi-body .fi-input-wrp:has([aria-invalid='true']) { border-color: var(--fox-danger); }
+/* Keyboard focus increases border contrast without creating another edge or changing geometry. */
+.fi-body .fi-input-wrp:has(:focus-visible) { border-color: var(--fox-input-focus); }
+.fi-body .fi-input-wrp :is(input, select, textarea):focus,
+.fox-permission-search input:focus { box-shadow: none; outline: none; }
+.fi-body .fi-input-wrp.fi-invalid:has(:focus-visible) { border-color: var(--fox-danger); }
+.fi-fo-field-label-content, .fi-fo-field-wrp-label { color: var(--fox-ink); font-size: .85rem; font-weight: 650; }
+.fi-fo-field-wrp-helper-text { color: var(--fox-muted); font-size: .78rem; line-height: 1.6; }
+.fi-fo-field-wrp-error-message { color: var(--fox-danger); font-size: .8rem; }
+.fi-fo-component-ctn { gap: 1rem; }
+.fi-section, .fi-ta-ctn, .fi-wi-stats-overview-stat, .fi-modal-window,
+.fi-dropdown-panel, .fi-simple-main, .fi-sc-wizard {
+    background: var(--fox-surface);
+    border: 1px solid var(--fox-border);
+    border-radius: var(--fox-radius);
+    box-shadow: var(--fox-shadow);
+}
+.fi-section { overflow: visible; }
+.fi-section-header { padding: 1rem 1.1rem; background: var(--fox-surface); border-block-end: 1px solid var(--fox-border); border-radius: var(--fox-radius) var(--fox-radius) 0 0; }
+.fi-section-header-heading { color: var(--fox-ink); font-size: .95rem; font-weight: 700; }
+.fi-section-content, .fi-sc-wizard-step { padding: 1.1rem; }
+.fi-fo-repeater { gap: .85rem; }
+.fi-fo-repeater-items { gap: .85rem; }
+.fi-fo-repeater-item { border: 1px solid var(--fox-border); border-radius: .65rem; background: var(--fox-surface); box-shadow: none; }
+.fi-fo-repeater-item-header { padding: .6rem .85rem; background: var(--fox-canvas); }
+.fi-fo-repeater-item-content { padding: .85rem; }
+.fi-modal-header { border-block-end: 1px solid var(--fox-border); padding-block: 1rem; }
+.fi-modal-footer { border-block-start: 1px solid var(--fox-border); padding-block: 1rem; }
+.fi-sc-actions { flex-wrap: wrap; gap: .65rem; }
+.fi-btn { min-height: 2.5rem; border-radius: .5rem; font-weight: 650; box-shadow: none; }
+.fi-btn.fi-color-primary { background: var(--fox-action); color: white; }
+.fi-btn.fi-color-primary:not(:disabled):hover { background: #066e66; }
+.fi-btn.fi-color-gray { background: var(--fox-surface); color: var(--fox-ink); border: 1px solid var(--fox-input-border); }
+.fi-btn:focus-visible, .fi-icon-btn:focus-visible, .fi-sidebar-item-btn:focus-visible,
+.fox-language-switcher button:focus-visible { outline: 2px solid var(--fox-input-focus); outline-offset: 2px; }
+.fi-icon-btn { border-radius: .4rem; }
+.fi-tabs { background: var(--fox-surface); border: 1px solid var(--fox-border); border-radius: .65rem; box-shadow: none; }
+.fi-tabs-item { min-height: 2.4rem; border-radius: .45rem; }
+.fi-tabs-item.fi-active { background: var(--fox-primary-soft); color: var(--fox-primary-dark); }
+.fi-badge { border-radius: 999px; font-size: .73rem; padding-inline: .6rem; }
+.fi-badge.fi-color-primary { background: var(--fox-primary-soft); color: var(--fox-primary-dark); }
+.fi-no-notification { background: var(--fox-surface); border: 1px solid var(--fox-border); border-radius: var(--fox-radius); box-shadow: var(--fox-shadow); }
+
+.fi-ta-table, .fi-in-table-repeatable { font-variant-numeric: tabular-nums; }
+.fox-data-table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.fox-data-table th { background: var(--fox-table-head); color: var(--fox-muted); font-weight: 650; text-align: start; }
+.fox-data-table th, .fox-data-table td { padding: .65rem .75rem; border-block-end: 1px solid var(--fox-border); }
+.fox-data-table tr:hover td { background: color-mix(in srgb, var(--fox-primary) 4%, var(--fox-surface)); }
+.fox-data-table td[dir='ltr'] { text-align: end; }
+.fi-ta-content, .fi-in-table-repeatable { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.fi-ta-header, .fi-ta-header-toolbar { padding: .85rem 1rem; gap: .65rem; }
+.fi-ta-header-toolbar { flex-wrap: wrap; }
+.fi-ta-header-cell { background: var(--fox-table-head); border-block-end: 1px solid var(--fox-border); padding-block: .65rem; }
+.fi-ta-header-cell-label { color: var(--fox-ink); font-size: .78rem; font-weight: 650; }
+.fi-ta-cell { padding-block: 0; }
+@media (min-width: 640px) {
+    .fi-ta-cell :is(.fi-ta-text, .fi-ta-image, .fi-ta-icon, .fi-ta-toggle, .fi-ta-select, .fi-ta-text-input):not(.fi-inline) { padding-block: .6rem; }
+    .fi-ta-selection-cell, .fi-ta-actions-cell { padding-block: .6rem; }
+}
+.fi-ta-row:not(:last-child) > .fi-ta-cell { border-block-end: 1px solid var(--fox-border); }
+.fi-ta-row:hover { background: color-mix(in srgb, var(--fox-primary) 4%, var(--fox-surface)); }
+.fi-ta-row:has(.fi-ta-record-checkbox:checked) { background: var(--fox-primary-soft); }
+.fi-ta-text-item-label { font-size: .85rem; }
+.fi-ta-footer { background: var(--fox-surface); border-block-start: 1px solid var(--fox-border); padding-block: .7rem; }
+.fi-ta-image img { object-fit: contain; border-radius: .5rem; background: white; border: 1px solid var(--fox-border); padding: .2rem; }
+.fi-ta-actions { gap: .4rem; }
+.fi-ta-empty-state { padding-block: 2rem; }
+.fi-pagination { gap: .65rem; }
+.fi-pagination-item-btn { min-height: 2rem; border-radius: .4rem; }
+.fi-pagination-overview { color: var(--fox-muted); font-size: .75rem; }
+.fi-pagination .fi-input-wrp { min-height: 2rem; }
+.fi-in-entry-label { color: var(--fox-muted); font-size: .78rem; }
+.fi-in-text { color: var(--fox-ink); font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }
+.fi-in-table-repeatable > table { background: var(--fox-surface); }
+.fi-in-table-repeatable > table > thead > tr > th { background: var(--fox-table-head); color: var(--fox-ink); border-color: var(--fox-border); }
+.fi-in-table-repeatable > table > tbody > tr { border-color: var(--fox-border); }
+.fi-in-table-repeatable > table > tbody > tr:hover { background: color-mix(in srgb, var(--fox-primary) 4%, var(--fox-surface)); }
+.fi-wi-stats-overview-stat { padding: 1.1rem; }
+.fi-wi-stats-overview-stat-value { color: var(--fox-ink); font-size: 1.65rem; font-variant-numeric: tabular-nums; font-weight: 750; }
+.fi-wi-stats-overview-stat-label, .fi-wi-stats-overview-stat-description { color: var(--fox-muted); font-size: .8rem; }
+.fi-wi-stats-overview-stat-icon { color: var(--fox-primary-dark); background: var(--fox-primary-soft); border-radius: .6rem; padding: .4rem; width: 2.2rem; height: 2.2rem; }
+.fi-simple-main { padding: 1.5rem; }
+.fi-simple-header .fi-logo { max-width: 14rem; padding: .65rem; border-radius: .65rem; background: var(--fox-sidebar); }
+@media (max-width: 767px) {
+    .fi-main { padding-inline: .75rem; }
+    .fi-global-search-field { width: auto; min-width: 0; }
+    .fi-header { align-items: start; }
+    .fi-section-content { padding: .85rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .fi-input-wrp, .fi-sidebar-item-btn, .fi-ta-row, .fi-btn { transition: none; }
+}

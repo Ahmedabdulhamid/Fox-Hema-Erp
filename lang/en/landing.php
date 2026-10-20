@@ -1,0 +1,33 @@
+<?php
+
+return [
+    'title' => 'Your retail workspace',
+    'description' => 'Bring your products, inventory, purchasing and sales together in one organized workspace. Built for the way your retail team works, across branches and languages.',
+    'skip' => 'Skip to content',
+    'login' => 'Sign in',
+    'dashboard' => 'Open dashboard',
+    'eyebrow' => 'CONNECTED RETAIL MANAGEMENT',
+    'headline' => 'Your business, connected.',
+    'headline_accent' => 'Your day, simplified.',
+    'explore' => 'Explore the workspace',
+    'highlights' => 'Workspace capabilities',
+    'bilingual' => 'Arabic & English',
+    'locations' => 'Multiple locations',
+    'permissions' => 'Role-based access',
+    'setup' => 'Flexible setup',
+    'preview' => 'Interface preview',
+    'preview_alt' => 'Fox & Hema interface on a laptop with floating inventory, product and customer cards, a barcode scanner and product packaging.',
+    'preview_caption' => 'Product illustration — not live business data.',
+    'workspace_eyebrow' => 'ONE WORKSPACE. EVERYDAY OPERATIONS.',
+    'workspace_title' => 'Everything has its place.',
+    'workspace_description' => 'A clear, consistent interface from your first product to your next sale.',
+    'footer' => 'A connected workspace for your retail team.',
+    'modules' => [
+        'products' => ['title' => 'Product catalog', 'description' => 'Organize products, categories, variants and barcodes.'],
+        'inventory' => ['title' => 'Inventory & locations', 'description' => 'Review stock balances and movements across your locations.'],
+        'sales' => ['title' => 'Sales management', 'description' => 'Work with orders, invoices, returns and credit notes.'],
+        'purchasing' => ['title' => 'Purchasing', 'description' => 'Manage suppliers, purchase orders and goods receipts.'],
+        'pos' => ['title' => 'Point of sale', 'description' => 'Bring checkout, POS sessions and transactions into your workflow.'],
+        'access' => ['title' => 'Users & permissions', 'description' => 'Manage team access with roles and location-scoped permissions.'],
+    ],
+];

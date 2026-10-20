@@ -1,0 +1,35 @@
+<?php
+
+use App\Modules\AccessManagement\Models\User;
+use App\Modules\Inventory\Models\SizeAllocation;
+use App\Modules\Inventory\Services\SizeAllocationService;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+require dirname(__DIR__, 2).'/vendor/autoload.php';
+
+$database = getenv('DB_DATABASE');
+if (getenv('APP_ENV') !== 'testing' || ! is_string($database)
+    || ! preg_match('/^codex_public_ids_test_purchasing_[a-zA-Z0-9_]+$/D', $database)) {
+    exit(2);
+}
+$app = require dirname(__DIR__, 2).'/bootstrap/app.php';
+$app->loadEnvironmentFrom('.env.isolated-purchasing-tests');
+$app->make(Kernel::class)->bootstrap();
+$connection = DB::connection();
+if ($connection->getDriverName() !== 'mysql' || $connection->getDatabaseName() !== $database
+    || $connection->selectOne('SELECT DATABASE() AS db')->db !== $database) {
+    exit(2);
+}
+$actor = User::findOrFail((int) getenv('ALLOCATION_ACTOR'));
+$allocation = SizeAllocation::findOrFail((int) getenv('ALLOCATION_ID'));
+while (microtime(true) < (float) getenv('ALLOCATION_START')) {
+    usleep(1000);
+}
+try {
+    $posted = app(SizeAllocationService::class)->post($actor, $allocation, getenv('ALLOCATION_REVISION'));
+    echo json_encode(['status' => 'posted', 'id' => $posted->id], JSON_THROW_ON_ERROR);
+} catch (ValidationException $exception) {
+    echo json_encode(['status' => 'rejected'], JSON_THROW_ON_ERROR);
+}
