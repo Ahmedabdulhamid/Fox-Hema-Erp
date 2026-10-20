@@ -4,6 +4,7 @@ namespace App\Modules\AccessManagement\Models;
 
 use App\Models\Concerns\HasPublicSlug;
 use App\Models\Concerns\HasPublicUuid;
+use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\InventoryCosting\Models\FifoLayer;
 use App\Modules\InventoryCosting\Models\InventoryCostEntry;
@@ -22,6 +23,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 #[Fillable(['name', 'code', 'type', 'address', 'phone', 'is_active'])]
@@ -52,12 +54,77 @@ class Location extends Model
         });
 
         static::updating(function (Location $location): void {
-
-            // Prevent changing the location code
             if ($location->isDirty('code')) {
                 $location->code = $location->getOriginal('code');
             }
         });
+    }
+
+    public function save(array $options = []): bool
+    {
+        if (! $this->exists || ! $this->isDirty('type')) {
+            return parent::save($options);
+        }
+
+        return $this->getConnection()->transaction(function () use ($options): bool {
+            ModuleRegistryLock::acquire();
+            $this->newQuery()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+            if ($this->hasDependencies(lockForUpdate: true)) {
+                throw ValidationException::withMessages(['data.type' => __('The type of a location that has been used cannot be changed.')]);
+            }
+
+            return parent::save($options);
+        });
+    }
+
+    public function delete(): ?bool
+    {
+        if (! $this->exists) {
+            return parent::delete();
+        }
+
+        return $this->getConnection()->transaction(function (): ?bool {
+            ModuleRegistryLock::acquire();
+            $this->newQuery()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+            if ($this->hasDependencies(lockForUpdate: true)) {
+                throw ValidationException::withMessages(['record' => __('This location has dependent records and cannot be deleted. Deactivate it instead.')]);
+            }
+
+            return parent::delete();
+        });
+    }
+
+    public function hasDependencies(bool $lockForUpdate = false): bool
+    {
+        $tables = [
+            'location_user', 'auth_events', 'purchase_orders', 'purchase_receipts',
+            'stock_balances', 'stock_movements', 'inventory_size_allocations', 'inventory_cost_states',
+            'sales_orders', 'sales_deliveries', 'sales_invoices', 'sales_returns', 'sales_credit_notes',
+            'sales_stock_reservations', 'sales_reservation_consumptions', 'sales_return_cost_allocations',
+            'quarantine_receipts', 'sales_return_scrap_receipts',
+            'pos_devices', 'pos_sessions', 'pos_transactions', 'payments',
+            'document_number_sequences', 'document_numbers',
+            config('permission.table_names.roles'), config('permission.table_names.model_has_roles'),
+            config('permission.table_names.model_has_permissions'),
+        ];
+
+        foreach ($tables as $table) {
+            $query = $this->getConnection()->table($table)->where('location_id', $this->getKey());
+            if ($lockForUpdate) {
+                $query->lockForUpdate();
+            }
+            if ($query->exists()) {
+                return true;
+            }
+        }
+
+        $query = $this->getConnection()->table('stock_transfers')
+            ->where('from_location_id', $this->getKey())->orWhere('to_location_id', $this->getKey());
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->exists();
     }
 
     protected function casts(): array

@@ -19,7 +19,13 @@ class SalesAccess
         $actor->unsetRelation('roles')->unsetRelation('permissions');
         app(ModuleAccess::class)->authorize($actor, 'sales', $permission);
         if ($locationId !== null) {
-            abort_unless(Location::whereKey($locationId)->where('type', 'branch')->where('is_active', true)->exists(), 403);
+            $location = Location::whereKey($locationId)->where('type', 'branch');
+            if (! in_array($permission, [SalesPermissions::VIEW, SalesPermissions::DELIVERIES_VIEW,
+                SalesPermissions::INVOICES_VIEW, SalesPermissions::RETURNS_VIEW, SalesPermissions::CREDITS_VIEW,
+                SalesPermissions::INVOICES_DOWNLOAD, SalesPermissions::CREDITS_DOWNLOAD], true)) {
+                $location->where('is_active', true);
+            }
+            abort_unless($location->exists(), 403);
         }
         if (! $actor->isGlobalSuperAdmin()) {
             $scope = getPermissionsTeamId();
@@ -48,7 +54,7 @@ class SalesAccess
         if (! $this->allows($actor, SalesPermissions::VIEW)) {
             return $query->whereRaw('1 = 0');
         }
-        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch')->where('is_active', true));
+        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch'));
 
         return $actor->isGlobalSuperAdmin() ? $query : $query->where('sales_orders.location_id', getPermissionsTeamId());
     }
@@ -68,7 +74,7 @@ class SalesAccess
         if (! $this->allows($actor, SalesPermissions::DELIVERIES_VIEW)) {
             return $query->whereRaw('1 = 0');
         }
-        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch')->where('is_active', true));
+        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch'));
 
         return $actor->isGlobalSuperAdmin() ? $query : $query->where($query->getModel()->qualifyColumn('location_id'), getPermissionsTeamId());
     }
@@ -78,7 +84,7 @@ class SalesAccess
         if (! $this->allows($actor, SalesPermissions::INVOICES_VIEW)) {
             return $query->whereRaw('1 = 0');
         }
-        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch')->where('is_active', true));
+        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch'));
 
         return $actor->isGlobalSuperAdmin() ? $query : $query->where($query->getModel()->qualifyColumn('location_id'), getPermissionsTeamId());
     }
@@ -88,7 +94,7 @@ class SalesAccess
         if (! $this->allows($actor, SalesPermissions::RETURNS_VIEW)) {
             return $query->whereRaw('1 = 0');
         }
-        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch')->where('is_active', true));
+        $query->whereHas('location', fn (Builder $locations) => $locations->where('type', 'branch'));
 
         return $actor->isGlobalSuperAdmin() ? $query : $query->where($query->getModel()->qualifyColumn('location_id'), getPermissionsTeamId());
     }

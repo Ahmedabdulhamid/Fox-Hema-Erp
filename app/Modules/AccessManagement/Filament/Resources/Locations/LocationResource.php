@@ -56,7 +56,8 @@ class LocationResource extends Resource
             Section::make(__('Location details'))->description(__('Add a branch or warehouse to your operating network.'))->icon('heroicon-m-building-storefront')->schema([
                 TextInput::make('name')->label(__('Location Name'))->placeholder(__('e.g. Downtown Branch'))->required()->maxLength(255)->columnSpanFull(),
                 // TextInput::make('code')->label(__('Location Code'))->placeholder(__('e.g. BR-01'))->required()->maxLength(40)->unique(ignoreRecord: true, modifyRuleUsing: fn (Unique $rule) => $rule)->dehydrateStateUsing(fn ($state) => strtoupper(trim($state)))->readOnly(),
-                Select::make('type')->label(__('Location Type'))->options(['branch' => __('Branch'), 'warehouse' => __('Warehouse')])->native(false)->required(),
+                Select::make('type')->label(__('Location Type'))->options(['branch' => __('Branch'), 'warehouse' => __('Warehouse')])->native(false)->required()
+                    ->disabled(fn (?Location $record): bool => $record?->hasDependencies() ?? false),
                 Toggle::make('is_active')->label(__('Active location'))->helperText(__('Location is active and can be used.'))->default(true)->required(),
             ])->columns(2)->columnSpanFull(),
             Section::make(__('Contact details'))->description(__('Optional address and phone information.'))->icon('heroicon-m-map-pin')->schema([

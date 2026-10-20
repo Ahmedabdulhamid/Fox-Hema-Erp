@@ -191,9 +191,7 @@ class SalesOrderService
         $locationId = (int) $validated['location_id'];
         $this->access->authorize($actor, SalesPermissions::VIEW, $locationId);
         $branch = $this->access->branches($actor)->whereKey($locationId)->sharedLock()->first();
-        if ($branch === null) {
-            $this->invalid('location_id', 'Choose an authorized active branch.');
-        }
+        abort_unless($branch !== null, 403);
         // Shared catalog locks remain compatible with inventory movement/upsert foreign-key reads.
         $variants = ProductVariant::whereKey(array_column($data['items'], 'variant_id'))->orderBy('id')->sharedLock()->get()->keyBy('id');
         $products = Product::whereKey($variants->pluck('product_id'))->orderBy('id')->sharedLock()->get()->keyBy('id');

@@ -29,6 +29,7 @@ class LocationPolicy
 
     public function delete(User $user, Location $location): bool
     {
-        return $this->update($user, $location) && ! $location->users()->exists() && ! $location->roles()->exists();
+        return ($user->isGlobalSuperAdmin() || ($user->can('locations.delete') && $user->locations()->whereKey($location)->exists()))
+            && ! $location->hasDependencies();
     }
 }

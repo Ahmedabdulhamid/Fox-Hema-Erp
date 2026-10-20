@@ -146,14 +146,15 @@ class SalesCreditNoteService
         if (! $this->access->allows($actor, SalesPermissions::CREDITS_VIEW)) {
             return $query->whereRaw('1 = 0');
         }
-        $query->whereHas('location', fn ($q) => $q->where('type', 'branch')->where('is_active', true));
+        $query->whereHas('location', fn ($q) => $q->where('type', 'branch'));
 
         return $actor->isGlobalSuperAdmin() ? $query : $query->where($query->getModel()->qualifyColumn('location_id'), getPermissionsTeamId());
     }
 
     public function returns(?User $actor): Builder
     {
-        return $this->scope(SalesReturn::query(), $actor)->where('status', 'posted')->whereNotNull('posting_evidence_hash');
+        return $this->scope(SalesReturn::query(), $actor)->where('status', 'posted')->whereNotNull('posting_evidence_hash')
+            ->whereHas('location', fn (Builder $query) => $query->where('is_active', true));
     }
 
     public function preview(User $actor, array $data): array

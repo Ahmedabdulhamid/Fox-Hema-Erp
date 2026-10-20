@@ -7,7 +7,6 @@ use App\Modules\AccessManagement\Models\Location;
 use App\Modules\Purchasing\Database\Seeders\SupplierSeeder;
 use App\Modules\Purchasing\Models\Supplier;
 use Illuminate\Support\Str;
-use RuntimeException;
 use Tests\Concerns\RefreshDatabase;
 use Tests\TestCase;
 
@@ -82,31 +81,34 @@ class PurchasingSetupSeedersTest extends TestCase
         $this->assertModelExists($custom);
     }
 
-    public function test_equivalent_location_name_with_another_key_stops_before_any_setup_writes(): void
+    public function test_existing_location_prevents_initialization_regardless_of_name_or_slug(): void
     {
         $existing = new Location(['name' => ' Branch-2 ', 'type' => 'branch', 'is_active' => false]);
         $existing->forceFill(['slug' => 'existing-second-branch'])->save();
         $before = $existing->fresh()->getAttributes();
-        try {
-            $this->seed(LocationSeeder::class);
-            $this->fail('Expected location conflict.');
-        } catch (RuntimeException $exception) {
-            $this->assertStringContainsString('manual approval', $exception->getMessage());
-        }
+        $this->seed(LocationSeeder::class);
         $this->assertDatabaseCount('locations', 1);
         $this->assertSame($before, $existing->fresh()->getAttributes());
     }
 
-    public function test_location_type_conflict_preserves_existing_record(): void
+    public function test_existing_location_with_a_different_type_is_preserved_without_initialization(): void
     {
         $existing = new Location(['name' => 'Central Warehouse', 'type' => 'branch']);
         $existing->forceFill(['slug' => 'central-warehouse'])->save();
-        $this->expectException(RuntimeException::class);
-        try {
-            $this->seed(LocationSeeder::class);
-        } finally {
-            $this->assertDatabaseCount('locations', 1);
-            $this->assertSame('branch', $existing->fresh()->type);
-        }
+        $this->seed(LocationSeeder::class);
+        $this->assertDatabaseCount('locations', 1);
+        $this->assertSame('branch', $existing->fresh()->type);
+    }
+
+    public function test_location_seeder_does_not_restore_a_deleted_default(): void
+    {
+        $this->seed(LocationSeeder::class);
+        Location::where('slug', 'branch-2')->firstOrFail()->delete();
+        $before = Location::orderBy('id')->get()->toArray();
+
+        $this->seed(LocationSeeder::class);
+
+        $this->assertSame($before, Location::orderBy('id')->get()->toArray());
+        $this->assertDatabaseCount('locations', 3);
     }
 }

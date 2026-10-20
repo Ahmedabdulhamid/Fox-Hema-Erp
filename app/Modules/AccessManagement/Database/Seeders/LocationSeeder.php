@@ -6,7 +6,6 @@ use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 class LocationSeeder extends Seeder
 {
@@ -21,28 +20,13 @@ class LocationSeeder extends Seeder
     {
         DB::transaction(function (): void {
             ModuleRegistryLock::acquire();
-            $existing = Location::query()->lockForUpdate()->get();
-            foreach (self::LOCATIONS as $slug => $data) {
-                $sameKey = $existing->firstWhere('slug', $slug);
-                $sameName = $existing->filter(fn (Location $location): bool => $this->normalizeName($location->name) === $this->normalizeName($data['name']));
-                if (($sameKey !== null && $sameKey->type !== $data['type'])
-                    || $sameName->contains(fn (Location $location): bool => $location->slug !== $slug)) {
-                    throw new RuntimeException("LocationSeeder conflict for {$data['name']}. Existing locations were preserved; manual approval and reconciliation are required.");
-                }
+            if (Location::query()->lockForUpdate()->first() !== null) {
+                return;
             }
             foreach (self::LOCATIONS as $slug => $data) {
-                if ($existing->contains('slug', $slug)) {
-                    continue;
-                }
-                // The unique slug is the setup key; Location generates its immutable code and UUID.
                 $location = new Location;
                 $location->fill([...$data, 'is_active' => true])->forceFill(['slug' => $slug])->save();
             }
-        });
-    }
-
-    private function normalizeName(string $name): string
-    {
-        return mb_strtolower(trim(preg_replace('/[\s_-]+/u', ' ', $name)));
+        }, 3);
     }
 }
