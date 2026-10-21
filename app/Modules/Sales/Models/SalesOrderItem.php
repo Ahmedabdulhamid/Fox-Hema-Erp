@@ -67,6 +67,8 @@ class SalesOrderItem extends Model
         'notes',
     ];
 
+    protected $hidden = ['profitability_snapshot'];
+
     protected static function newFactory(): SalesOrderItemFactory
     {
         return SalesOrderItemFactory::new();
@@ -75,6 +77,7 @@ class SalesOrderItem extends Model
     protected function casts(): array
     {
         return [
+            'profitability_snapshot' => 'array',
             'commercial_snapshot' => 'array',
             'quantity' => 'decimal:4',
             'unit_price' => 'decimal:6',

@@ -11,6 +11,7 @@ use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
 use App\Modules\Sales\Services\SalesAccess;
 use App\Modules\Sales\Services\SalesLinePricing;
 use App\Modules\Sales\Services\SalesProductSelection;
+use App\Modules\Sales\Services\SalesProfitability;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Hidden;
@@ -112,13 +113,22 @@ class SalesOrderForm
                                 CommercialSelectors::definition('taxes', 'sales'),
                                 self::amountCell('tax_amount', 'Applied tax amount'),
                             ]),
-                            Group::make()->schema([self::amountCell('subtotal', 'Subtotal'), self::amountCell('line_total', 'Line total', true)]),
+                            Group::make()->schema([self::amountCell('subtotal', 'Subtotal'), self::amountCell('line_total', 'Line total', true),
+                                View::make('components.profitability-line')->visible(fn (Get $get): bool => app(SalesProfitability::class)->canView(auth()->user(), $get('../../location_id')))
+                                    ->viewData(function (Get $get, View $component): array {
+                                        $key = last(explode('.', $component->getContainer()->getStatePath()));
+
+                                        return ['profitability' => self::profitabilityPreview($get('../../items') ?? [], $get('../../location_id'))['lines'][$key] ?? null];
+                                    }),
+                            ]),
                         ]),
             ]),
             Group::make()->columnSpanFull()->columns(['default' => 1, 'lg' => 12])->schema([
                 Section::make(__('Notes'))->icon('heroicon-o-pencil-square')->columnSpan(['default' => 1, 'lg' => 7])->schema([Textarea::make('notes')->label(__('Notes'))->hiddenLabel()->placeholder(__('Add notes or instructions?'))->rows(4)->maxLength(16000)]),
                 Section::make(__('Financial totals'))->columnSpan(['default' => 1, 'lg' => 5])->icon('heroicon-o-calculator')->schema([
                     View::make('components.financial-summary')->viewData(fn (Get $get): array => self::totalsPreview($get) + ['commercial' => true]),
+                    View::make('components.profitability-summary')->visible(fn (Get $get): bool => app(SalesProfitability::class)->canView(auth()->user(), $get('location_id')))
+                        ->viewData(fn (Get $get): array => ['profitability' => self::profitabilityPreview($get('items') ?? [], $get('location_id'))['summary'] ?? []]),
                 ]),
             ]),
         ])->columns(['default' => 1, 'lg' => 2]);
@@ -135,6 +145,32 @@ class SalesOrderForm
         } catch (ValidationException $exception) {
             return ['totals' => null, 'notice' => (string) collect($exception->errors())->flatten()->first()];
         }
+    }
+
+    private static function profitabilityPreview(array $items, ?int $locationId): array
+    {
+        abort_unless(app(SalesProfitability::class)->canView(auth()->user(), $locationId), 403);
+        if ($locationId === null) {
+            return [];
+        }
+        $key = 'sales-profitability-preview.'.hash('sha256', json_encode([$locationId, $items], JSON_THROW_ON_ERROR));
+        if (request()->attributes->has($key)) {
+            return request()->attributes->get($key);
+        }
+        try {
+            $lines = [];
+            foreach ($items as $id => $item) {
+                $lines[$id] = self::price($item, $locationId) + ['variant_id' => (int) ($item['variant_id'] ?? 0)];
+            }
+            $service = app(SalesProfitability::class);
+            $estimates = $service->estimates($lines, $locationId);
+            $result = ['lines' => $estimates, 'summary' => $service->summarize($estimates)];
+        } catch (ValidationException) {
+            $result = [];
+        }
+        request()->attributes->set($key, $result);
+
+        return $result;
     }
 
     private static function price(array $line, ?int $locationId): array

@@ -9,6 +9,7 @@ use App\Modules\AccessManagement\Filament\Pages\Profile;
 use App\Modules\AccessManagement\Http\Middleware\EnforceAccountSecurity;
 use App\Modules\AccessManagement\Http\Middleware\ResetLocationPermissionContext;
 use App\Modules\AccessManagement\Http\Middleware\SetLocationPermissionContext;
+use App\Modules\Sales\Filament\Pages\Profitability;
 use Filament\Enums\ThemeMode;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -117,6 +118,7 @@ class AdminPanelProvider extends PanelProvider
             )
             ->pages([
                 Dashboard::class,
+                Profitability::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([

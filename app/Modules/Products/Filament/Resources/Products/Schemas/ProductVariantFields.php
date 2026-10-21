@@ -2,6 +2,7 @@
 
 namespace App\Modules\Products\Filament\Resources\Products\Schemas;
 
+use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Models\Color;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Models\Size;
@@ -11,6 +12,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\View;
 
 class ProductVariantFields
 {
@@ -33,7 +35,7 @@ class ProductVariantFields
         }
         $fixed = fn ($livewire, Get $get): bool => $duringProductCreation ? (bool) $get('../../has_fixed_selling_price') : $livewire->usesUnifiedPrice();
         $shared = fn ($livewire, Get $get): mixed => $duringProductCreation ? $get('../../sale_price') : $livewire->sharedSellingPrice();
-        $fields[] = TextInput::make('sale_price')->label(__('Sale price'))->type('number')->inputMode('decimal')->minValue(0)->step('0.0001')
+        $fields[] = TextInput::make('sale_price')->label(__('Sale price'))->type('number')->inputMode('decimal')->minValue(0)->step('0.0001')->live(onBlur: true)
             ->rules(['numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D'])
             ->default(fn ($livewire, Get $get): mixed => $shared($livewire, $get) ?? '0.0000')
             ->view('components.variant-selling-price', fn ($livewire, Get $get): array => ['unified' => $fixed($livewire, $get), 'sharedPrice' => $shared($livewire, $get)])
@@ -41,7 +43,11 @@ class ProductVariantFields
             ->dehydrated(fn ($livewire, Get $get): bool => $access->allows(auth()->user(), 'products.update_prices') && ! $fixed($livewire, $get));
         $fields[] = Toggle::make('is_active')->label(__('Active'))->default(true);
         if ($access->referenceCost(auth()->user())) {
-            $fields[] = TextInput::make('cost_price')->label(__('Reference cost (not accounting valuation)'))->numeric()->minValue(0)->step('0.0001')->disabled(! $access->allows(auth()->user(), 'products.update_reference_cost'))->dehydrated($access->allows(auth()->user(), 'products.update_reference_cost'));
+            $fields[] = TextInput::make('cost_price')->label(__('Reference cost (not accounting valuation)'))->numeric()->minValue(0)->step('0.0001')->live(onBlur: true)->disabled(! $access->allows(auth()->user(), 'products.update_reference_cost'))->dehydrated($access->allows(auth()->user(), 'products.update_reference_cost'));
+            $fields[] = View::make('components.profitability-summary')->columnSpanFull()
+                ->viewData(fn ($livewire, Get $get): array => ['profitability' => app(ProfitabilityCalculator::class)->preview(
+                    $fixed($livewire, $get) ? $shared($livewire, $get) : $get('sale_price'), $get('cost_price'),
+                ), 'source' => __('Reference unit cost; before configured discounts and taxes')]);
         }
 
         return $fields;

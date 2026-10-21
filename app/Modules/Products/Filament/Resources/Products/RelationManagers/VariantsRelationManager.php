@@ -5,6 +5,7 @@ namespace App\Modules\Products\Filament\Resources\Products\RelationManagers;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Inventory\Services\ProductInventorySummary;
+use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Filament\ProductMutation;
 use App\Modules\Products\Filament\Resources\Products\Schemas\ProductVariantFields;
 use App\Modules\Products\Models\ProductVariant;
@@ -89,6 +90,10 @@ class VariantsRelationManager extends RelationManager
                 ->type('number')->step('0.0001')->rules(['required', 'numeric', 'min:0', 'decimal:0,4'])
                 ->disabled(fn (ProductVariant $record): bool => $record->isUnallocated() || $this->usesUnifiedPrice() || ! auth()->user()->can('updateSalePrice', $record))
                 ->updateStateUsing(fn (ProductVariant $record, mixed $state): string => ProductMutation::run(fn () => app(ProductVariantManager::class)->save(auth()->user(), $this->getOwnerRecord(), ['sale_price' => $state], $record))->sale_price), TextColumn::make('cost_price')->label(__('Reference cost'))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())), IconColumn::make('is_active')->label(__('Active'))->boolean(),
+            TextColumn::make('estimated_profitability')->label(__('Estimated profitability'))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user()))
+                ->state('estimated')->formatStateUsing(fn (ProductVariant $record) => view('components.profitability-summary', ['profitability' => app(ProfitabilityCalculator::class)->preview(
+                    $this->usesUnifiedPrice() ? $this->sharedSellingPrice() : $record->sale_price, $record->cost_price,
+                ), 'source' => __('Reference unit cost; before configured discounts and taxes')])),
         ])->filters([TernaryFilter::make('is_active')->label(__('Active'))])->headerActions([
             Action::make('enableUnallocated')->label(__('Enable unallocated receiving'))->requiresConfirmation()
                 ->visible(fn (): bool => app(ProductsAccess::class)->allows(auth()->user(), 'products.variants.create')

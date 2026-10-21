@@ -21,6 +21,9 @@
             </x-filament::input.wrapper>
         </div>
         @if ($valuation)
+            <x-filament::section>
+                @include('components.profitability-summary', ['profitability' => $valuation['profitability'], 'source' => __('Location cost estimate for one unit; before discounts and taxes')])
+            </x-filament::section>
             <x-filament::section :heading="__('Inventory Valuation')" icon="heroicon-o-calculator">
                 <dl class="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     @foreach ([__('Product') => $valuation['variant']->product->name, __('Variant') => $valuation['variant']->displayName(), __('SKU') => $valuation['variant']->sku, __('Location') => $valuation['location']->name, __('Costing method') => __($valuation['method_label'])] as $label => $value)

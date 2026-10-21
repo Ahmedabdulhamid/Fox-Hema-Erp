@@ -27,6 +27,7 @@ use DOMXPath;
 use Filament\Facades\Filament;
 use Filament\Schemas\Components\Tabs\Tab;
 use Illuminate\Support\Str;
+use Illuminate\Support\ViewErrorBag;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -68,9 +69,15 @@ class ProductPricingUxTest extends TestCase
     private function assertUnifiedDisplay(mixed $page, string $price): void
     {
         $document = new DOMDocument;
-        @$document->loadHTML($page->instance() instanceof VariantsRelationManager
-            ? $page->instance()->getSchema($page->instance()->getMountedActionSchemaName())->toHtml()
-            : $page->html());
+        $previousErrors = view()->shared('errors');
+        view()->share('errors', (new ViewErrorBag)->put('default', $page->instance()->getErrorBag()));
+        try {
+            @$document->loadHTML($page->instance() instanceof VariantsRelationManager
+                ? $page->instance()->getSchema($page->instance()->getMountedActionSchemaName())->toHtml()
+                : $page->html());
+        } finally {
+            view()->share('errors', $previousErrors);
+        }
         $inputs = (new DOMXPath($document))->query('//input[@data-unified-selling-price]');
         $this->assertGreaterThan(0, $inputs->length);
         foreach ($inputs as $input) {

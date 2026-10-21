@@ -2,6 +2,7 @@
 
 namespace App\Modules\Products\Filament\Resources\Products\Schemas;
 
+use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Services\ProductsAccess;
 use App\Modules\Products\Services\SellingPriceResolver;
@@ -45,7 +46,7 @@ class ProductInfolist
                 RepeatableEntry::make('variant_summary')->hiddenLabel()->table(fn (): array => [
                     TableColumn::make(__('SKU')),
                     TableColumn::make(__('Sale price')),
-                    ...(app(ProductsAccess::class)->referenceCost(auth()->user()) ? [TableColumn::make(__('Reference cost'))] : []),
+                    ...(app(ProductsAccess::class)->referenceCost(auth()->user()) ? [TableColumn::make(__('Reference cost')), TableColumn::make(__('Estimated profitability'))] : []),
                     TableColumn::make(__('Barcode')),
                     TableColumn::make(__('Size')),
                     TableColumn::make(__('Color')),
@@ -59,6 +60,9 @@ class ProductInfolist
                         $variant->setRelation('product', $record);
                         $data = $variant->toArray();
                         $data['sale_price'] = app(SellingPriceResolver::class)->resolve($variant);
+                        if (array_key_exists('cost_price', $data)) {
+                            $data['profitability'] = app(ProfitabilityCalculator::class)->calculate($data['sale_price'], $variant->cost_price);
+                        }
 
                         return $data;
                     })->all();
@@ -66,6 +70,8 @@ class ProductInfolist
                     TextEntry::make('sku')->label(__('SKU'))->copyable(),
                     TextEntry::make('sale_price')->label(__('Sale price'))->numeric(decimalPlaces: 4),
                     TextEntry::make('cost_price')->label(__('Reference cost'))->numeric(decimalPlaces: 4)->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())),
+                    TextEntry::make('profitability')->label(__('Estimated profitability'))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user()))
+                        ->state('estimated')->formatStateUsing(fn (TextEntry $component) => view('components.profitability-summary', ['profitability' => data_get($component->getContainer()->getConstantState(), 'profitability', []), 'source' => __('Reference unit cost; before configured discounts and taxes')])),
                     TextEntry::make('barcode')->label(__('Barcode'))->placeholder(__('No barcode'))
                         ->formatStateUsing(fn ($state) => view('components.barcode-preview', ['value' => $state])),
                     TextEntry::make('size.name')->label(__('Size'))->placeholder(__('No size')),

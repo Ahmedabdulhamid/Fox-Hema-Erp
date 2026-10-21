@@ -5,6 +5,7 @@ namespace App\Modules\Sales\Filament\Resources\SalesOrders\Schemas;
 use App\Modules\Sales\Filament\Resources\SalesOrders\Tables\SalesOrdersTable;
 use App\Modules\Sales\Models\SalesOrder;
 use App\Modules\Sales\Models\SalesStockReservation;
+use App\Modules\Sales\Services\SalesProfitability;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\RepeatableEntry\TableColumn;
 use Filament\Infolists\Components\TextEntry;
@@ -43,13 +44,19 @@ class SalesOrderInfolist
                             TextEntry::make('unit_price')->label(__('Unit selling price (EGP, excluding tax)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state])),
                             TextEntry::make('discount_amount')->label(__('Discounts'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'discount', 'amount' => $state])),
                             TextEntry::make('tax_amount')->label(__('Taxes'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'tax', 'amount' => $state])),
-                            TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
+                            Group::make()->schema([
+                                TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
+                                View::make('components.profitability-line')->visible(fn ($record): bool => app(SalesProfitability::class)->canView(auth()->user(), (int) $record->salesOrder->location_id))
+                                    ->viewData(fn ($record): array => ['profitability' => self::profitability($record->salesOrder)['lines'][$record->id] ?? null]),
+                            ]),
                         ]),
             ]),
             Group::make()->columns(['default' => 1, 'lg' => 12])->columnSpanFull()->schema([
                 Section::make(__('Notes'))->icon('heroicon-o-pencil-square')->columnSpan(['default' => 1, 'lg' => 7])->schema([TextEntry::make('notes')->hiddenLabel()->placeholder(__('No notes'))]),
                 Section::make(__('Financial totals'))->icon('heroicon-o-calculator')->columnSpan(['default' => 1, 'lg' => 5])->schema([
                     View::make('components.financial-summary')->viewData(fn (SalesOrder $record): array => ['commercial' => true, 'totals' => $record->only(['subtotal', 'discount_amount', 'tax_amount', 'total_amount'])]),
+                    View::make('components.profitability-summary')->visible(fn (SalesOrder $record): bool => app(SalesProfitability::class)->canView(auth()->user(), (int) $record->location_id))
+                        ->viewData(fn (SalesOrder $record): array => ['profitability' => self::profitability($record)['summary']]),
                 ]),
             ]),
             Section::make(__('Stock reservations'))->schema([
@@ -64,5 +71,16 @@ class SalesOrderInfolist
                     ]),
             ]),
         ])->columns(1);
+    }
+
+    private static function profitability(SalesOrder $order): array
+    {
+        abort_unless(app(SalesProfitability::class)->canView(auth()->user(), (int) $order->location_id), 403);
+        $key = 'sales-profitability-order.'.$order->id;
+        if (! request()->attributes->has($key)) {
+            request()->attributes->set($key, app(SalesProfitability::class)->order(auth()->user(), $order));
+        }
+
+        return request()->attributes->get($key);
     }
 }

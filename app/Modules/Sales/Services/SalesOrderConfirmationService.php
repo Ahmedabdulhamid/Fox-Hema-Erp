@@ -40,6 +40,7 @@ class SalesOrderConfirmationService
             $this->assertNotCancelled($order);
             $this->checkRevision($order, $revision);
             $lines = $this->drafts->validateForConfirmation($actor, $order);
+            app(SalesProfitability::class)->capture($order);
             $hash = $this->fingerprint($order);
             $this->reservations->reserve($order, $lines);
             // Lifecycle model writes are deliberately blocked; this workflow has locked and validated all evidence.
@@ -109,6 +110,9 @@ class SalesOrderConfirmationService
             // Preserve fingerprints created before the nullable evidence column existed.
             if (($attributes['commercial_snapshot'] ?? null) === null) {
                 unset($attributes['commercial_snapshot']);
+            }
+            if (($attributes['profitability_snapshot'] ?? null) === null) {
+                unset($attributes['profitability_snapshot']);
             }
 
             return $attributes;

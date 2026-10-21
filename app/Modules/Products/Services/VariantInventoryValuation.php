@@ -13,6 +13,8 @@ use App\Modules\InventoryCosting\Models\InventoryCostState;
 use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\InventoryCosting\Services\CategoryCostingManager;
+use App\Modules\InventoryCosting\Services\EstimatedCostResolver;
+use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
 use App\Modules\Purchasing\Services\PurchasingAccess;
@@ -107,6 +109,8 @@ class VariantInventoryValuation
             && (! BigDecimal::of($fifoQuantity)->isEqualTo($state->on_hand_qty) || ! BigDecimal::of($fifoValue)->isEqualTo($state->total_value));
 
         return [
+            'profitability' => app(ProfitabilityCalculator::class)->calculate(app(SellingPriceResolver::class)->resolve($variant),
+                app(EstimatedCostResolver::class)->lines([['variant_id' => $variant->id, 'quantity' => '1.0000']], $locationId)[0]['cost']),
             'variant' => $variant, 'location' => Location::findOrFail($locationId),
             'method' => $method, 'method_label' => CategoryCostingManager::METHODS[$method] ?? 'Not configured',
             'balance' => $balance, 'state' => $state, 'quantity' => $physicalQuantity,

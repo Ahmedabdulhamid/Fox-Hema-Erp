@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/Support/PurchaseOrderMySqlBootstrap.php" colors="true">
+    <testsuites>
+        <testsuite name="Profitability MySQL">
+            <file>tests/Unit/ProfitabilityCalculatorTest.php</file>
+            <file>tests/Feature/ProfitabilityTest.php</file>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="APP_KEY" value="base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="BCRYPT_ROUNDS" value="4" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+    </php>
+</phpunit>
