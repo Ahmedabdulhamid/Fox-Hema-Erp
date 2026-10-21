@@ -99,7 +99,9 @@ class SalesCreditNoteService
                 'sales_return_posted_allocation_id' => $item->sales_return_posted_allocation_id, 'quantity' => $item->quantity])->all());
             foreach ($items as $index => $item) {
                 foreach ($lines[$index] as $field => $value) {
-                    if ($field === 'commercial_snapshot' ? $item->{$field} !== $value : (string) $item->{$field} !== (string) $value) {
+                    if ($field === 'commercial_snapshot'
+                        ? SalesPricingSnapshot::normalize($item->{$field}) !== SalesPricingSnapshot::normalize($value)
+                        : (string) $item->{$field} !== (string) $value) {
                         $this->invalid('review');
                     }
                 }

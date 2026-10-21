@@ -29,6 +29,7 @@ use App\Modules\Sales\Services\SalesPermissions;
 use App\Modules\Sales\Services\SalesProductSelection;
 use Brick\Math\BigDecimal;
 use Filament\Facades\Filament;
+use Filament\Notifications\Notification;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
@@ -267,6 +268,30 @@ class SalesOrderManagementTest extends TestCase
             $this->reject(fn () => $this->service->update($this->actor, $order, $this->payload(), $this->service->revision($order)));
             $this->assertFalse(Gate::allows('update', $order));
         }
+    }
+
+    public function test_stale_edit_revision_is_reported_as_a_visible_arabic_danger_notification(): void
+    {
+        $order = $this->create();
+        app()->setLocale('ar');
+        session(['locale' => 'ar']);
+        $page = Livewire::test(EditSalesOrder::class, ['record' => $order->uuid]);
+        $order->update(['notes' => 'Changed after opening the editor']);
+        $page->call('save')->assertHasFormErrors(['revision'])
+            ->assertNotified(Notification::make()->title(__('Sales operation failed'))
+                ->body(__('This sales order changed. Reload before continuing.'))->danger());
+        $this->assertSame('Changed after opening the editor', $order->fresh()->notes);
+        $this->assertSame('0.0000', StockBalance::first()->quantity_reserved);
+    }
+
+    public function test_required_sales_form_errors_show_an_arabic_danger_notification(): void
+    {
+        app()->setLocale('ar');
+        session(['locale' => 'ar']);
+        $page = Livewire::test(CreateSalesOrder::class)->call('create')->assertHasFormErrors();
+        $page->assertNotified(Notification::make()->title(__('Sales operation failed'))
+            ->body(implode(' ', $page->instance()->getErrorBag()->all()))->danger());
+        $this->assertSame(0, SalesOrder::count());
     }
 
     public function test_creation_retry_reuses_document_and_conflicting_retry_is_rejected(): void

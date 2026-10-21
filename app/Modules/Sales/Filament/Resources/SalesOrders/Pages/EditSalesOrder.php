@@ -2,8 +2,9 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesOrders\SalesOrderResource;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Services\SalesOrderService;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -13,6 +14,8 @@ use Livewire\Attributes\Locked;
 
 class EditSalesOrder extends EditRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesOrderResource::class;
 
     #[Locked]
@@ -30,7 +33,7 @@ class EditSalesOrder extends EditRecord
     protected function handleRecordUpdate(Model $record, array $data): Model
     {
         $service = app(SalesOrderService::class);
-        $record = ProductMutation::run(fn () => $service->update(auth()->user(), $record, $data, $this->revision), 'data');
+        $record = SalesMutation::run(fn () => $service->update(auth()->user(), $record, $data, $this->revision), 'data');
         $this->record = $record;
         $this->revision = $service->revision($record);
         $this->data['items'] = $service->formItems($record);

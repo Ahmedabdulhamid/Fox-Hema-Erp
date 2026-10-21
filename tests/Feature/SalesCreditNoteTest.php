@@ -38,12 +38,14 @@ use App\Modules\Sales\Services\SalesReturnPostingService;
 use App\Modules\Sales\Services\SalesReturnService;
 use Brick\Math\BigDecimal;
 use Filament\Facades\Filament;
+use Filament\Notifications\Notification;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Process\Process;
 use Tests\Concerns\HasConfiguredSalesPricing;
@@ -77,7 +79,7 @@ class SalesCreditNoteTest extends TestCase
     {
         parent::setUp();
         $this->assertSame('mysql', DB::getDriverName());
-        $this->assertStringContainsString('MariaDB', DB::selectOne('SELECT VERSION() AS version')->version);
+        $this->assertMatchesRegularExpression('/^(?:8\.|[0-9]+\.[0-9]+\.[0-9]+-MariaDB)/', DB::selectOne('SELECT VERSION() AS version')->version);
         $this->seed(AccessManagementSeeder::class);
         Module::whereIn('code', ['sales', 'products', 'inventory', 'inventory_costing', 'purchasing'])->update(['is_active' => true]);
         Filament::setCurrentPanel(Filament::getPanel('admin'));
@@ -229,6 +231,61 @@ class SalesCreditNoteTest extends TestCase
     {
         return collect(['sales_credit_notes', 'sales_credit_note_items', 'document_numbers', 'document_number_sequences', 'auth_events'])
             ->mapWithKeys(fn ($table) => [$table => DB::table($table)->orderBy('id')->get()->toJson()])->all();
+    }
+
+    public function test_mysql_credit_snapshot_key_order_preserves_posting_and_replay(): void
+    {
+        [$return, $invoice] = $this->fixture();
+        $note = $this->draftCredit($return, $invoice);
+        $item = $note->items()->sole();
+        $snapshot = $item->commercial_snapshot;
+        $snapshot['invoice'] = array_reverse($snapshot['invoice'], true);
+        DB::table('sales_credit_note_items')->where('id', $item->id)->update([
+            'commercial_snapshot' => json_encode(array_reverse($snapshot, true), JSON_THROW_ON_ERROR),
+        ]);
+        $before = $this->invariants();
+        $note = $this->postCredit($note);
+        $this->assertSame('posted', $note->status);
+        $this->assertSame($invoice->total_amount, $note->total_amount);
+        $service = app(SalesCreditNoteService::class);
+        $this->assertSame($note->id, $service->post($this->actor, $note, $service->revision($note))->id);
+        $this->assertSame($before, $this->invariants());
+    }
+
+    /** @return array<string, array{string}> */
+    public static function invalidCreditPricingEvidence(): array
+    {
+        return ['changed type' => ['type'], 'missing snapshot' => ['missing'], 'missing nested evidence' => ['field']];
+    }
+
+    #[DataProvider('invalidCreditPricingEvidence')]
+    public function test_credit_snapshot_changes_cannot_be_hidden_by_normalization(string $change): void
+    {
+        [$return, $invoice] = $this->fixture();
+        $note = $this->draftCredit($return, $invoice);
+        $item = $note->items()->sole();
+        $snapshot = $item->commercial_snapshot;
+        switch ($change) {
+            case 'type':
+                $snapshot['original_quantity'] = 3;
+                break;
+            case 'missing':
+                $snapshot = null;
+                break;
+            case 'field':
+                unset($snapshot['invoice']['order_pricing']);
+                break;
+        }
+        DB::table('sales_credit_note_items')->where('id', $item->id)->update([
+            'commercial_snapshot' => $snapshot === null ? null : json_encode($snapshot, JSON_THROW_ON_ERROR),
+        ]);
+        $before = $this->invariants();
+        app()->setLocale('ar');
+        session(['locale' => 'ar']);
+        Livewire::test(ViewSalesCreditNote::class, ['record' => $note->uuid])->callAction('post')
+            ->assertNotified(Notification::make()->title(__('credits.operation_failed'))->body(__('credits.review'))->danger())->assertNoRedirect();
+        $this->assertSame('draft', $note->refresh()->status);
+        $this->assertSame($before, $this->invariants());
     }
 
     public function test_full_return_conserves_invoice_and_changes_no_inventory_payments_or_history(): void

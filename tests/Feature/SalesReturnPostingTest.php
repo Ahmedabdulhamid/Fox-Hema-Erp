@@ -629,7 +629,7 @@ class SalesReturnPostingTest extends TestCase
     {
         parent::setUp();
         $this->assertSame('mysql', DB::getDriverName());
-        $this->assertStringContainsString('MariaDB', DB::selectOne('SELECT VERSION() AS version')->version);
+        $this->assertMatchesRegularExpression('/^(?:8\.|[0-9]+\.[0-9]+\.[0-9]+-MariaDB)/', DB::selectOne('SELECT VERSION() AS version')->version);
         $this->seed(AccessManagementSeeder::class);
         Module::whereIn('code', ['sales', 'products', 'inventory', 'inventory_costing', 'purchasing'])->update(['is_active' => true]);
         Filament::setCurrentPanel(Filament::getPanel('admin'));

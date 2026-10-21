@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Modules\Inventory\Models\StockMovement;
+use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesCreditNoteItem;
 use App\Modules\Sales\Models\SalesDelivery;
 use App\Modules\Sales\Models\SalesDeliveryItem;
@@ -65,13 +66,20 @@ class SalesPersistenceTest extends TestCase
             'sales_delivery_item_id' => $deliveryItem->id,
             'sales_invoice_item_id' => $invoiceItem->id,
         ]);
-        $creditItem = SalesCreditNoteItem::factory()->create([
+        $creditNote = SalesCreditNote::factory()->make([
+            'sales_invoice_id' => $invoice->id, 'sales_return_id' => $returnItem->sales_return_id, 'location_id' => $order->location_id,
+        ]);
+        $creditNoteId = DB::table('sales_credit_notes')->insertGetId($creditNote->getAttributes() +
+            ['uuid' => (string) Str::uuid7(), 'created_at' => now(), 'updated_at' => now()]);
+        $creditItem = SalesCreditNoteItem::factory()->make([
+            'sales_credit_note_id' => $creditNoteId,
             'sales_invoice_item_id' => $invoiceItem->id,
             'sales_return_item_id' => $returnItem->id,
         ]);
+        $creditItemId = DB::table('sales_credit_note_items')->insertGetId($creditItem->getAttributes() +
+            ['uuid' => (string) Str::uuid7(), 'created_at' => now(), 'updated_at' => now()]);
+        $creditItem = SalesCreditNoteItem::findOrFail($creditItemId);
         $creditNote = $creditItem->salesCreditNote;
-        $creditNote->salesReturn()->associate($returnItem->salesReturn);
-        $creditNote->save();
         $this->historicalMatch();
 
         $order = $order->fresh(['items.deliveryItems', 'deliveries.items', 'invoices.items', 'returns.items']);

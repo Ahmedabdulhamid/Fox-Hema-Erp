@@ -14,15 +14,19 @@ use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
+use App\Modules\Sales\Filament\Resources\SalesOrders\Pages\ListSalesOrders;
 use App\Modules\Sales\Filament\Resources\SalesOrders\Pages\ViewSalesOrder;
 use App\Modules\Sales\Models\SalesOrder;
 use App\Modules\Sales\Models\SalesStockReservation;
+use App\Modules\Sales\Services\SalesLinePricing;
 use App\Modules\Sales\Services\SalesOrderConfirmationService;
 use App\Modules\Sales\Services\SalesOrderService;
 use App\Modules\Sales\Services\SalesPermissions;
 use App\Modules\Taxes\Models\Tax;
 use Brick\Math\BigDecimal;
+use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
+use Filament\Notifications\Notification;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
@@ -32,6 +36,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\Process\Process;
@@ -519,6 +524,82 @@ class SalesOrderConfirmationTest extends TestCase
         $this->assertSame(1, SalesStockReservation::count());
         $this->assertSame('7.0000', StockBalance::first()->quantity_reserved);
         $this->assertSame('3.0000', StockBalance::first()->quantity_available);
+        $this->assertSame('10.0000', StockBalance::first()->quantity_on_hand);
+    }
+
+    public function test_mysql_json_round_trip_confirms_saved_taxes_and_discounts_from_both_actions(): void
+    {
+        $tax = Tax::factory()->create(['rate' => '14']);
+        $discount = Discount::factory()->create(['value' => '10']);
+        $this->variant->product->taxes()->attach($tax);
+        $this->variant->product->discounts()->attach($discount);
+        $line = Arr::except($this->line($this->variant, '2'), ['discount_amount', 'tax_amount']);
+        foreach ([false, true] as $table) {
+            $order = $this->draft('2', [$line]);
+            $saved = $order->items()->sole()->commercial_snapshot;
+            $calculated = app(SalesLinePricing::class)->line($this->variant, $line)['commercial_snapshot'];
+            if (DB::getDriverName() === 'mysql' && ! str_contains(DB::selectOne('SELECT VERSION() AS version')->version, 'MariaDB')) {
+                $this->assertNotSame(array_keys($saved), array_keys($calculated));
+            }
+            $this->assertEquals($calculated, $saved);
+            app()->setLocale('ar');
+            session(['locale' => 'ar']);
+            Livewire::test($table ? ListSalesOrders::class : ViewSalesOrder::class, $table ? [] : ['record' => $order->uuid])
+                ->callAction($table ? TestAction::make('confirm')->table($order) : 'confirm')
+                ->assertNotified(__('Sales order confirmed and stock reserved.'))->assertRedirect();
+            $this->assertSame('confirmed', $order->refresh()->status);
+            $this->assertSame('2.0000', $order->reservations()->sole()->quantity_reserved);
+            $this->assertSame('10.0000', StockBalance::first()->quantity_on_hand);
+            $this->assertSame($saved, $order->items()->sole()->commercial_snapshot);
+            $this->workflow->cancel($this->actor, $order);
+            $this->assertSame('0.0000', StockBalance::first()->quantity_reserved);
+        }
+    }
+
+    /** @return array<string, array{string}> */
+    public static function invalidPricingEvidence(): array
+    {
+        return ['changed value' => ['value'], 'changed type' => ['type'], 'missing evidence' => ['missing'],
+            'missing nested field' => ['field'], 'reordered list' => ['list']];
+    }
+
+    #[DataProvider('invalidPricingEvidence')]
+    public function test_changed_or_missing_snapshot_evidence_shows_arabic_feedback_without_reserving_stock(string $change): void
+    {
+        $taxes = Tax::factory()->count(2)->create(['rate' => '0']);
+        $discount = Discount::factory()->create(['value' => '0']);
+        $this->variant->product->taxes()->attach($taxes->modelKeys());
+        $this->variant->product->discounts()->attach($discount);
+        $order = $this->draft();
+        $item = $order->items()->sole();
+        $snapshot = $item->commercial_snapshot;
+        switch ($change) {
+            case 'value':
+                $snapshot['quantity'] = '6.0000';
+                break;
+            case 'type':
+                $snapshot['version'] = '1';
+                break;
+            case 'missing':
+                $snapshot = null;
+                break;
+            case 'field':
+                unset($snapshot['discount']['code']);
+                break;
+            case 'list':
+                $snapshot['taxes'] = array_reverse($snapshot['taxes']);
+                break;
+        }
+        $item->update(['commercial_snapshot' => $snapshot]);
+        app()->setLocale('ar');
+        session(['locale' => 'ar']);
+        Livewire::test(ViewSalesOrder::class, ['record' => $order->uuid])->callAction('confirm')
+            ->assertNotified(Notification::make()->title(__('Sales order operation failed'))
+                ->body(__('Configured pricing changed or evidence is missing. Save the draft before confirmation.'))->danger())
+            ->assertNoRedirect();
+        $this->assertSame('draft', $order->refresh()->status);
+        $this->assertSame(0, SalesStockReservation::count());
+        $this->assertSame('0.0000', StockBalance::first()->quantity_reserved);
         $this->assertSame('10.0000', StockBalance::first()->quantity_on_hand);
     }
 

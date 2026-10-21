@@ -2,8 +2,9 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesOrders\SalesOrderResource;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Services\SalesOrderService;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\CreateRecord;
@@ -13,6 +14,8 @@ use Livewire\Attributes\Locked;
 
 class CreateSalesOrder extends CreateRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesOrderResource::class;
 
     protected static bool $canCreateAnother = false;
@@ -28,7 +31,7 @@ class CreateSalesOrder extends CreateRecord
 
     protected function handleRecordCreation(array $data): Model
     {
-        return ProductMutation::run(fn () => app(SalesOrderService::class)->create(auth()->user(), $data, $this->submissionId), 'data');
+        return SalesMutation::run(fn () => app(SalesOrderService::class)->create(auth()->user(), $data, $this->submissionId), 'data');
     }
 
     protected function getCreateFormAction(): Action

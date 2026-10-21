@@ -52,7 +52,8 @@ class SalesOrderService
 
                     return $values;
                 })->all();
-                if ($existing->status !== 'draft' || $storedHeader !== $header || $storedLines !== array_values($lines)) {
+                if ($existing->status !== 'draft' || $storedHeader !== $header
+                    || SalesPricingSnapshot::normalize($storedLines) !== SalesPricingSnapshot::normalize(array_values($lines))) {
                     $this->invalid('submission_id', 'This submission identity was already used for different order details.');
                 }
 
@@ -127,7 +128,7 @@ class SalesOrderService
             + Arr::only($item->toArray(), ['id', 'variant_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'notes']))->all();
         [, $lines] = $this->prepare($actor, $data);
         foreach (array_values($lines) as $index => $line) {
-            if ($items[$index]->commercial_snapshot !== $line['commercial_snapshot']) {
+            if (SalesPricingSnapshot::normalize($items[$index]->commercial_snapshot) !== SalesPricingSnapshot::normalize($line['commercial_snapshot'])) {
                 $this->invalid('record', 'Configured pricing changed or evidence is missing. Save the draft before confirmation.');
             }
             foreach (['quantity', 'unit_price', 'subtotal', 'discount_amount', 'tax_amount', 'line_total'] as $field) {

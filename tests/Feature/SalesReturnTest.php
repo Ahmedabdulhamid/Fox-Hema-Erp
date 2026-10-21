@@ -37,6 +37,7 @@ use App\Modules\Sales\Services\SalesReturnQuantityService;
 use App\Modules\Sales\Services\SalesReturnService;
 use Brick\Math\BigDecimal;
 use Filament\Facades\Filament;
+use Filament\Notifications\Notification;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
@@ -487,6 +488,21 @@ class SalesReturnTest extends TestCase
         $this->reject(fn () => $this->approveReturn($return, $this->actor), HttpException::class);
     }
 
+    public function test_required_cancellation_reason_is_visible_in_an_arabic_modal_notification(): void
+    {
+        $return = $this->returnDraft($this->deliver($this->order()));
+        $before = $this->invariants();
+        app()->setLocale('ar');
+        session(['locale' => 'ar']);
+        $page = Livewire::test(ViewSalesReturn::class, ['record' => $return->uuid])
+            ->mountAction('cancel')->callMountedAction()->assertHasActionErrors(['reason'])
+            ->assertActionMounted('cancel')->assertNoRedirect();
+        $page->assertNotified(Notification::make()->title(__('Sales operation failed'))
+            ->body(implode(' ', $page->instance()->getErrorBag()->all()))->danger());
+        $this->assertSame('draft', $return->refresh()->status);
+        $this->assertSame($before, $this->invariants());
+    }
+
     public function test_arabic_filament_create_edit_view_approve_cancel_and_list(): void
     {
         app()->setLocale('ar');
@@ -558,7 +574,7 @@ class SalesReturnTest extends TestCase
     {
         parent::setUp();
         $this->assertSame('mysql', DB::getDriverName());
-        $this->assertStringContainsString('MariaDB', DB::selectOne('SELECT VERSION() AS version')->version);
+        $this->assertMatchesRegularExpression('/^(?:8\.|[0-9]+\.[0-9]+\.[0-9]+-MariaDB)/', DB::selectOne('SELECT VERSION() AS version')->version);
         $this->seed(AccessManagementSeeder::class);
         Module::whereIn('code', ['sales', 'products', 'inventory', 'inventory_costing', 'purchasing'])->update(['is_active' => true]);
         Filament::setCurrentPanel(Filament::getPanel('admin'));

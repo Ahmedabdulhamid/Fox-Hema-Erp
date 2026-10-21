@@ -2,9 +2,10 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesDeliveries\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesDeliveries\SalesDeliveryResource;
 use App\Modules\Sales\Filament\SalesDeliveryActions;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Services\SalesDeliveryService;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
@@ -13,6 +14,8 @@ use Livewire\Attributes\Locked;
 
 class EditSalesDelivery extends EditRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesDeliveryResource::class;
 
     #[Locked]
@@ -28,7 +31,7 @@ class EditSalesDelivery extends EditRecord
 
     protected function handleRecordUpdate(Model $record, array $data): Model
     {
-        $record = ProductMutation::run(fn () => app(SalesDeliveryService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
+        $record = SalesMutation::run(fn () => app(SalesDeliveryService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
         $this->revision = app(SalesDeliveryService::class)->revision($record);
 
         return $record;

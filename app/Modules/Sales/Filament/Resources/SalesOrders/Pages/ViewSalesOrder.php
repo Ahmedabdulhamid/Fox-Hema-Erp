@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Pages;
 
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesDeliveries\SalesDeliveryResource;
 use App\Modules\Sales\Filament\Resources\SalesOrders\SalesOrderResource;
 use App\Modules\Sales\Filament\SalesOrderActions;
@@ -14,6 +15,8 @@ use Filament\Resources\Pages\ViewRecord;
 
 class ViewSalesOrder extends ViewRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesOrderResource::class;
 
     protected function getHeaderActions(): array

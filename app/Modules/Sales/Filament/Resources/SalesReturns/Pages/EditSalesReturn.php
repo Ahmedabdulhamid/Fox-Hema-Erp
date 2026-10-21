@@ -2,8 +2,9 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesReturns\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesReturns\SalesReturnResource;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Filament\SalesReturnActions;
 use App\Modules\Sales\Services\SalesReturnService;
 use Filament\Actions\ViewAction;
@@ -13,6 +14,8 @@ use Livewire\Attributes\Locked;
 
 class EditSalesReturn extends EditRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesReturnResource::class;
 
     #[Locked]
@@ -28,7 +31,7 @@ class EditSalesReturn extends EditRecord
 
     protected function handleRecordUpdate(Model $record, array $data): Model
     {
-        $record = ProductMutation::run(fn () => app(SalesReturnService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
+        $record = SalesMutation::run(fn () => app(SalesReturnService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
         $this->revision = app(SalesReturnService::class)->revision($record);
 
         return $record;

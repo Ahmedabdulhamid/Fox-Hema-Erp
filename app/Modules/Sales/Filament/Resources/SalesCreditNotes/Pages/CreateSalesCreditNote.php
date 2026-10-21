@@ -2,8 +2,9 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesCreditNotes\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesCreditNotes\SalesCreditNoteResource;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Services\SalesCreditNoteService;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
@@ -12,6 +13,8 @@ use Livewire\Attributes\Locked;
 
 class CreateSalesCreditNote extends CreateRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesCreditNoteResource::class;
 
     protected static bool $canCreateAnother = false;
@@ -27,7 +30,7 @@ class CreateSalesCreditNote extends CreateRecord
 
     protected function handleRecordCreation(array $data): Model
     {
-        return ProductMutation::run(fn () => app(SalesCreditNoteService::class)->create(auth()->user(), $data, $this->submissionId), 'data');
+        return SalesMutation::run(fn () => app(SalesCreditNoteService::class)->create(auth()->user(), $data, $this->submissionId), 'data');
     }
 
     protected function getCreatedNotificationTitle(): ?string

@@ -2,8 +2,9 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesCreditNotes\Pages;
 
-use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesCreditNotes\SalesCreditNoteResource;
+use App\Modules\Sales\Filament\SalesMutation;
 use App\Modules\Sales\Services\SalesCreditNoteService;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
@@ -12,6 +13,8 @@ use Livewire\Attributes\Locked;
 
 class EditSalesCreditNote extends EditRecord
 {
+    use ReportsSalesValidationErrors;
+
     protected static string $resource = SalesCreditNoteResource::class;
 
     #[Locked]
@@ -29,7 +32,7 @@ class EditSalesCreditNote extends EditRecord
 
     protected function handleRecordUpdate(Model $record, array $data): Model
     {
-        $record = ProductMutation::run(fn () => app(SalesCreditNoteService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
+        $record = SalesMutation::run(fn () => app(SalesCreditNoteService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
         $this->revision = app(SalesCreditNoteService::class)->revision($record);
 
         return $record;
