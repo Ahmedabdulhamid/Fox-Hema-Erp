@@ -247,7 +247,7 @@ class PurchaseOrderService
                 [, $lines] = $this->prepare($actor, $data);
                 foreach (array_values($lines) as $index => $line) {
                     app(PurchaseLinePricing::class)->assertPostable($line, 'items.'.$index.'.');
-                    if ($items[$index]->commercial_snapshot !== $line['commercial_snapshot']) {
+                    if ($this->normalizeSnapshot($items[$index]->commercial_snapshot) !== $this->normalizeSnapshot($line['commercial_snapshot'])) {
                         $this->invalid('items', 'Configured purchase pricing changed or evidence is missing. Save the draft before confirmation.');
                     }
                     foreach ($this->calculator->line($line) as $field => $value) {
@@ -272,6 +272,23 @@ class PurchaseOrderService
 
             return $order->refresh();
         }, 3);
+    }
+
+    /** JSON object key order may change during database storage; list order and scalar types remain significant. */
+    private function normalizeSnapshot(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->normalizeSnapshot($item);
+        }
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+
+        return $value;
     }
 
     private function rejectProtectedFields(array $data): void

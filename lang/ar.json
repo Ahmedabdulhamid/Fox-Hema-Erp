@@ -1150,6 +1150,7 @@
     "Choose active, effective taxes applicable to this document.": "اختر ضرائب نشطة وسارية ومناسبة لهذا المستند.",
     "Choose an eligible configured discount.": "اختر خصمًا مُعرّفًا وساريًا لهذا المستند.",
     "This selection is calculated in the draft. Confirmation requires an approved supplier-discount, tax-recovery and inventory-cost policy. Choose no adjustment or a zero-valued definition.": "هذا الاختيار محسوب في المسودة. التأكيد يتطلب اعتماد سياسة خصم المورد واسترداد الضريبة وتكلفة المخزون. اختر بدون تعديل أو تعريفًا بقيمة صفر.",
+    "Purchase order operation failed": "تعذر إتمام عملية أمر الشراء",
     "Back": "رجوع",
     "Policy required": "سياسة مطلوبة",
     "Review selected definitions.": "راجع التعريفات المختارة.",

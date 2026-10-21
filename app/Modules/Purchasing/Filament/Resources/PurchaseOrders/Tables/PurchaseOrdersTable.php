@@ -2,7 +2,6 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Tables;
 
-use App\Modules\Products\Filament\ProductMutation;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\PurchaseOrderResource;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Services\PurchaseOrderService;
@@ -12,11 +11,13 @@ use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\ValidationException;
 use Livewire\Component;
 
 class PurchaseOrdersTable
@@ -64,7 +65,14 @@ class PurchaseOrdersTable
                 ->requiresConfirmation()->modalDescription(__('Applies to saved document values. This action does not receive stock.'))
                 ->schema([Hidden::make('revision')->default(fn (PurchaseOrder $record): string => app(PurchaseOrderService::class)->revision($record))])
                 ->action(function (PurchaseOrder $record, array $data, Component $livewire) use ($method): void {
-                    ProductMutation::run(fn () => app(PurchaseOrderService::class)->{$method}(auth()->user(), $record, $data['revision']));
+                    try {
+                        app(PurchaseOrderService::class)->{$method}(auth()->user(), $record, $data['revision']);
+                    } catch (ValidationException $exception) {
+                        Notification::make()->title(__('Purchase order operation failed'))
+                            ->body(collect($exception->errors())->flatten()->implode(' '))->danger()->send();
+
+                        throw $exception;
+                    }
                     $livewire->redirect(PurchaseOrderResource::getUrl('view', ['record' => $record]));
                 });
         }
