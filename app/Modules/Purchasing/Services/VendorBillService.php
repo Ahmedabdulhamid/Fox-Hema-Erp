@@ -101,7 +101,7 @@ class VendorBillService
                 }
             }
             foreach ($items as $index => $item) {
-                if ($item->commercial_snapshot !== ($lines[$index]['commercial_snapshot'] ?? null)) {
+                if ($this->normalizeSnapshot($item->commercial_snapshot) !== $this->normalizeSnapshot($lines[$index]['commercial_snapshot'] ?? null)) {
                     $this->invalid('totals', 'Bill pricing evidence changed. Save the draft again before posting.');
                 }
                 foreach (['subtotal', 'line_total'] as $field) {
@@ -320,6 +320,23 @@ class VendorBillService
             $this->access->authorize($actor, PurchasingPermissions::ORDERS_VIEW, (int) $order->location_id);
             $this->access->authorize($actor, PurchasingPermissions::RECEIPTS_VIEW, (int) $order->location_id);
         }
+    }
+
+    /** JSON object key order may change during database storage; list order and scalar types remain significant. */
+    private function normalizeSnapshot(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->normalizeSnapshot($item);
+        }
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+
+        return $value;
     }
 
     private function draft(VendorBill $bill): void
