@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Modules\AccessManagement\Database\Seeders\AccessManagementSeeder;
+use App\Modules\Payments\Database\Seeders\PaymentsDatabaseSeeder;
 use App\Modules\Products\Database\Seeders\ColorSeeder;
 use App\Modules\Products\Database\Seeders\SizeSeeder;
 use App\Modules\Taxes\Database\Seeders\TaxSeeder;
@@ -17,6 +18,10 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call([AccessManagementSeeder::class, ColorSeeder::class, SizeSeeder::class]);
+
+        if (Schema::hasTable('payment_methods')) {
+            $this->call(PaymentsDatabaseSeeder::class);
+        }
 
         if (Schema::hasTable('taxes')) {
             $this->call(TaxSeeder::class);

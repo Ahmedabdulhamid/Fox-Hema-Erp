@@ -2,6 +2,8 @@
 
 namespace App\Modules\AccessManagement\Services;
 
+use App\Models\MoneyFormatter;
+use App\Models\QuantityFormatter;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\Products\Models\Product;
 use App\Modules\Purchasing\Models\PurchaseOrder;
@@ -95,7 +97,7 @@ class DocumentSelectors
         $party = $record instanceof PurchaseOrder ? $record->supplier?->name : $record->customer_name;
 
         return implode(' · ', array_filter([$record->display_reference, $party, $record->location?->name,
-            $record->total_amount.' EGP', __('documents.'.$record->status)]));
+            MoneyFormatter::format($record->total_amount), __('documents.'.$record->status)]));
     }
 
     /** Catalog filters remain constrained to authorized document source lines. */
@@ -186,7 +188,7 @@ class DocumentSelectors
             $detail['product_id'] = $variant?->product_id;
             $detail['variant_id'] = $variant?->id;
             $detail['label'] = $source.$variant->displayName().' · '.$order->display_reference.' · '.$order->location->name
-                .' · '.__('documents.remaining').': '.$detail['remaining'];
+                .' · '.__('documents.remaining').': '.QuantityFormatter::format($detail['remaining']);
             $details[$id] = $detail;
         }
 

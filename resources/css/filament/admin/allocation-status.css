@@ -1,0 +1,52 @@
+.fox-allocation-primary-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; border-block-end: 1px solid var(--fox-border); margin-block-end: 1rem; padding-block-end: .65rem; }
+.fox-allocation-primary-tabs > button { padding: .6rem .9rem; border-radius: .55rem; font-weight: 600; font-size: .85rem; color: var(--fox-muted); cursor: pointer; }
+.fox-allocation-primary-tabs > button[aria-pressed="true"] { color: var(--inventory-blue); background: color-mix(in srgb, var(--inventory-blue) 10%, var(--fox-surface)); }
+.fox-allocation-primary-tabs > a { margin-inline-start: auto; font-size: .75rem; }
+.fox-allocation-primary-tabs button:focus-visible, .fox-allocation-tabs button:focus-visible, .fox-allocation-card:focus-visible { outline: 2px solid var(--fox-input-focus); outline-offset: 2px; }
+.fox-allocation-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.fox-allocation-filter-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; margin-inline-start: auto; }
+.fox-allocation-history-note { font-size: .8rem; color: var(--fox-muted); }
+.fox-allocation-supervisor .fox-inventory-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
+.fox-allocation-supervisor .fox-inventory-kpi { min-height: 5rem; padding: .8rem; gap: .6rem; }
+.fox-allocation-supervisor .fox-inventory-kpi strong { font-size: 1.5rem; }
+.fox-allocation-tabs { display: flex; flex-wrap: wrap; gap: .4rem; padding: .35rem; border: 1px solid var(--fox-border); background: var(--fox-surface); border-radius: .8rem; }
+.fox-allocation-tabs button { padding: .6rem .85rem; border-radius: .5rem; font-size: .75rem; color: var(--fox-muted); }
+.fox-allocation-tabs button[aria-pressed="true"] { color: var(--inventory-blue); background: color-mix(in srgb, var(--inventory-blue) 10%, var(--fox-surface)); font-weight: 700; }
+.fox-allocation-supervisor .fi-ta-filters-dropdown { width: min(56rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); }
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-ta-filters,
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-ta-filters > *,
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-sc,
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-sc > *,
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-input-wrp { min-width: 0; max-width: 100%; }
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-ta-filters { gap: .75rem; padding: 1rem; }
+.fox-allocation-supervisor .fi-ta-filters-dropdown .fi-input-wrp { width: 100%; }
+.fox-allocation-card { text-align: start; cursor: pointer; }
+.fox-allocation-card[aria-pressed="true"] { border-color: currentColor; }
+.fox-allocation-card-label { display: block; color: var(--fox-muted); font-size: .75rem; margin-block-end: .5rem; }
+.fox-allocation-review { font-size: .75rem; line-height: 1.8; color: var(--fox-danger); cursor: pointer; }
+.fox-allocation-progress { min-width: 5rem; font-size: .7rem; font-variant-numeric: tabular-nums; }
+.fox-allocation-progress > div { height: .3rem; background: var(--fox-border); overflow: hidden; border-radius: 1rem; margin-block-start: .35rem; }
+.fox-allocation-progress > div > span { display: block; height: 100%; background: var(--inventory-teal); border-radius: inherit; }
+.fox-allocation-detail-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+.fox-allocation-detail-metrics > :is(div, article) { min-width: 0; background: var(--fox-canvas); padding: .7rem; border-radius: .6rem; }
+.fox-allocation-detail-metrics span, .fox-allocation-details td small { display: block; font-size: .75rem; color: var(--fox-muted); }
+.fox-allocation-detail-metrics strong { display: block; margin-block-start: .35rem; }
+.fox-allocation-details { display: grid; gap: 1rem; min-width: 0; }
+.fox-allocation-details-product { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+.fox-allocation-details-product > div { min-width: 0; }
+.fox-allocation-details-product h2, .fox-allocation-document-list h3 { font-size: 1rem; font-weight: 700; }
+.fox-allocation-details .fox-inventory-matrix { min-width: 0; }
+.fox-allocation-details .fox-inventory-scroll { max-width: 100%; overflow-x: auto; }
+.fox-allocation-details .fox-smart-table { min-width: max-content; }
+.fox-allocation-empty { padding: 1rem; color: var(--fox-muted); }
+.fox-allocation-matrix-pages { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-block-start: .8rem; }
+.fox-allocation-supervisor .fi-ta-text-item { white-space: normal; }
+@media (max-width: 767px) {
+ .fox-allocation-supervisor .fox-inventory-kpis, .fox-allocation-detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+ .fox-allocation-details-product { align-items: start; flex-direction: column; }
+ .fox-allocation-primary-tabs > a { width: 100%; margin-inline-start: 0; }
+ .fox-allocation-tabs { width: 100%; gap: .2rem; }
+ .fox-allocation-filter-actions { width: 100%; margin-inline-start: 0; }
+ .fox-allocation-tabs button { flex: 1 0 30%; padding: .5rem .3rem; }
+ .fox-allocation-supervisor .fox-inventory-kpi-icon { display: none; }
+}

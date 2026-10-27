@@ -3,6 +3,7 @@
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Schemas;
 
 use App\Models\QuantityFormatter;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
 use App\Modules\Purchasing\Services\PurchaseReceiptService;
@@ -35,29 +36,48 @@ class PurchaseReceiptInfolist
                     ->reduce(fn (BigDecimal $total, PurchaseReceiptItem $item): BigDecimal => $total
                         ->plus(BigDecimal::of($item->quantity)->multipliedBy($item->unit_cost)->toScale(4, RoundingMode::HalfUp)), BigDecimal::zero())->toScale(4)),
             ]),
-            RepeatableEntry::make('items')->label(__('Receipt lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence'])
-                ->table(array_map(fn ($label) => TableColumn::make(__($label))->wrapHeader(),
-                    ['Product variant', 'Ordered quantity', 'Expected quantity', 'Previously received quantity', 'Remaining quantity', 'Quantity to receive',
-                        'Actual unit purchase cost (EGP)', 'Purchase value (EGP)', 'Costing method', 'Inventory valuation unit cost (EGP)', 'Inventory value (EGP)', 'Purchase-price variance (EGP)']))->schema([
-                            TextEntry::make('variant_label')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->purchaseOrderItem->variant, 'title' => $state]))->label(__('Product variant'))->state(fn (PurchaseReceiptItem $record): string => $record->purchaseOrderItem->variant->displayName()),
-                            TextEntry::make('purchaseOrderItem.quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity')),
-                            TextEntry::make('expected_quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Expected quantity')),
-                            TextEntry::make('previously_received')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Previously received quantity'))->state(function (PurchaseReceiptItem $record): string {
-                                $total = app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0';
-
-                                return (string) BigDecimal::of($total)->minus($record->purchaseReceipt->status === 'posted' ? $record->quantity : '0')->toScale(4);
-                            }),
-                            TextEntry::make('remaining')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Remaining quantity'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->purchaseOrderItem->quantity)
-                                ->minus(app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0')->toScale(4)),
-                            TextEntry::make('quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Quantity to receive')),
-                            TextEntry::make('unit_cost')->label(__('Actual unit purchase cost (EGP)')),
-                            TextEntry::make('purchase_value')->label(__('Purchase value (EGP)'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->quantity)->multipliedBy($record->unit_cost)->toScale(4, RoundingMode::HalfUp)),
-                            TextEntry::make('stockMovement.inventoryCostEntry.method')->label(__('Costing method')),
-                            TextEntry::make('stockMovement.valuation_unit_cost')->label(__('Inventory valuation unit cost (EGP)')),
-                            TextEntry::make('stockMovement.inventoryCostEntry.total_cost')->label(__('Inventory value (EGP)')),
-                            TextEntry::make('stockMovement.inventoryCostEntry.purchase_price_variance')->label(__('Purchase-price variance (EGP)')),
-                        ]),
+            RepeatableEntry::make('items')->label(__('Receipt lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-master-detail-table'])
+                ->table(array_map(fn (string $label): TableColumn => TableColumn::make(__($label))->wrapHeader(),
+                    ['Product', 'Variant', 'Quantity', 'Unit cost', 'Purchase value (EGP)', 'View Details']))->schema([
+                        TextEntry::make('variant_label')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->purchaseOrderItem->variant, 'title' => $state]))->label(__('Product variant'))->state(fn (PurchaseReceiptItem $record): string => $record->purchaseOrderItem->variant->displayName()),
+                        View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => data_get($record, 'purchaseOrderItem.variant')]),
+                        TextEntry::make('quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Quantity to receive')),
+                        TextEntry::make('unit_cost')->label(__('Actual unit purchase cost (EGP)')),
+                        TextEntry::make('purchase_value')->label(__('Purchase value (EGP)'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->quantity)->multipliedBy($record->unit_cost)->toScale(4, RoundingMode::HalfUp)),
+                        MasterDetail::entry(fn (): array => self::lineDetails()),
+                    ]),
             TextEntry::make('notes')->label(__('Notes')),
         ])->columns(1);
+    }
+
+    private static function lineDetails(): array
+    {
+        return [
+            Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('variant_label')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->purchaseOrderItem->variant, 'title' => $state]))->label(__('Product variant'))->state(fn (PurchaseReceiptItem $record): string => $record->purchaseOrderItem->variant->displayName()),
+            ]),
+            Section::make(__('Quantities'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('purchaseOrderItem.quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity')),
+                TextEntry::make('expected_quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Expected quantity')),
+                TextEntry::make('previously_received')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Previously received quantity'))->state(function (PurchaseReceiptItem $record): string {
+                    $total = app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0';
+
+                    return (string) BigDecimal::of($total)->minus($record->purchaseReceipt->status === 'posted' ? $record->quantity : '0')->toScale(4);
+                }),
+                TextEntry::make('remaining')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Remaining quantity'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->purchaseOrderItem->quantity)
+                    ->minus(app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0')->toScale(4)),
+                TextEntry::make('quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Quantity to receive')),
+            ]),
+            Section::make(__('Purchasing'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('unit_cost')->label(__('Actual unit purchase cost (EGP)')),
+                TextEntry::make('purchase_value')->label(__('Purchase value (EGP)'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->quantity)->multipliedBy($record->unit_cost)->toScale(4, RoundingMode::HalfUp)),
+            ]),
+            Section::make(__('Inventory Valuation'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('stockMovement.inventoryCostEntry.method')->label(__('Costing method')),
+                TextEntry::make('stockMovement.valuation_unit_cost')->label(__('Inventory valuation unit cost (EGP)')),
+                TextEntry::make('stockMovement.inventoryCostEntry.total_cost')->label(__('Inventory value (EGP)')),
+                TextEntry::make('stockMovement.inventoryCostEntry.purchase_price_variance')->label(__('Purchase-price variance (EGP)')),
+            ]),
+        ];
     }
 }

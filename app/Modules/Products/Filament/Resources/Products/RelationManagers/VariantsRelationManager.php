@@ -6,7 +6,9 @@ use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Inventory\Services\ProductInventorySummary;
 use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Products\Filament\Resources\Products\Schemas\ProductInfolist;
 use App\Modules\Products\Filament\Resources\Products\Schemas\ProductVariantFields;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Services\ProductsAccess;
@@ -81,16 +83,16 @@ class VariantsRelationManager extends RelationManager
                 $query->select(['product_variants.id', 'product_variants.uuid', 'product_id', 'unallocated_product_id', 'size_id', 'color_id', 'sku', 'barcode', 'sale_price', 'is_active', 'created_at', 'updated_at']);
             }
 
-            return $query->with(['product.images', 'images', 'size', 'color']);
+            return $query->with(['product.images', 'product.brand', 'images', 'size', 'color']);
         })->columns([
-            TextColumn::make('sku')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record, 'title' => $state]))->label(__('SKU'))->searchable(), TextColumn::make('barcode')->label(__('Barcode'))->searchable()->placeholder(__('No barcode'))->toggleable(isToggledHiddenByDefault: true), TextColumn::make('size.name')->label(__('Size')), TextColumn::make('color.name')->label(__('Color')), TextInputColumn::make('sale_price')->label(__('Effective selling price'))
+            TextColumn::make('sku')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record, 'title' => $state]))->label(__('SKU'))->searchable(), TextColumn::make('barcode')->label(__('Barcode'))->searchable()->placeholder(__('No barcode'))->toggleable(isToggledHiddenByDefault: true), TextColumn::make('variant_summary')->label(__('Variant'))->state('variant')->formatStateUsing(fn ($record) => view('components.variant-summary', ['variant' => $record])), TextInputColumn::make('sale_price')->label(__('Effective selling price'))
                 ->state(fn (ProductVariant $record): mixed => $this->pricingContext === null
                     ? app(SellingPriceResolver::class)->resolve($record)
                     : ($this->usesUnifiedPrice() ? $this->sharedSellingPrice() : $record->sale_price))
                 ->type('number')->step('0.0001')->rules(['required', 'numeric', 'min:0', 'decimal:0,4'])
                 ->disabled(fn (ProductVariant $record): bool => $record->isUnallocated() || $this->usesUnifiedPrice() || ! auth()->user()->can('updateSalePrice', $record))
-                ->updateStateUsing(fn (ProductVariant $record, mixed $state): string => ProductMutation::run(fn () => app(ProductVariantManager::class)->save(auth()->user(), $this->getOwnerRecord(), ['sale_price' => $state], $record))->sale_price), TextColumn::make('cost_price')->label(__('Reference cost'))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())), IconColumn::make('is_active')->label(__('Active'))->boolean(),
-            TextColumn::make('estimated_profitability')->label(__('Estimated profitability'))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user()))
+                ->updateStateUsing(fn (ProductVariant $record, mixed $state): string => ProductMutation::run(fn () => app(ProductVariantManager::class)->save(auth()->user(), $this->getOwnerRecord(), ['sale_price' => $state], $record))->sale_price), TextColumn::make('cost_price')->label(__('Reference cost'))->toggleable(isToggledHiddenByDefault: true)->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())), IconColumn::make('is_active')->label(__('Active'))->boolean(),
+            TextColumn::make('estimated_profitability')->label(__('Estimated profitability'))->toggleable(isToggledHiddenByDefault: true)->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user()))
                 ->state('estimated')->formatStateUsing(fn (ProductVariant $record) => view('components.profitability-summary', ['profitability' => app(ProfitabilityCalculator::class)->preview(
                     $this->usesUnifiedPrice() ? $this->sharedSellingPrice() : $record->sale_price, $record->cost_price,
                 ), 'source' => __('Reference unit cost; before configured discounts and taxes')])),
@@ -107,6 +109,7 @@ class VariantsRelationManager extends RelationManager
                 ->modalContent(fn () => view('components.product-inventory-summary', app(ProductInventorySummary::class)->forProduct(auth()->user(), $this->getOwnerRecord()))),
             CreateAction::make()->using(fn (array $data): ProductVariant => ProductMutation::run(fn () => app(ProductVariantManager::class)->save(auth()->user(), $this->getOwnerRecord(), $data), $this->getMountedActionSchema()?->getStatePath())),
         ])->recordActions([
+            MasterDetail::action(fn (): array => ProductInfolist::variantDetails()),
             Action::make('barcodePreview')->label(__('Barcode preview'))->icon('heroicon-o-magnifying-glass-plus')
                 ->visible(fn (ProductVariant $record): bool => ! $record->isUnallocated())
                 ->authorize(fn (ProductVariant $record): bool => auth()->user()->can('view', $record) && auth()->user()->can('view', $this->getOwnerRecord()))

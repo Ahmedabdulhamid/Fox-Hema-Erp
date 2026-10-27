@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesInvoices\Pages;
 
+use App\Modules\Payments\Filament\CustomerSettlementActions;
 use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesInvoices\SalesInvoiceResource;
 use App\Modules\Sales\Filament\SalesInvoiceActions;
@@ -16,7 +17,9 @@ class ViewSalesInvoice extends ViewRecord
 
     protected function getHeaderActions(): array
     {
-        return [EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
+        return [CustomerSettlementActions::receiveInvoicePayment(),
+            CustomerSettlementActions::linkInvoice(true),
+            EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
             SalesInvoiceActions::download('ar'), SalesInvoiceActions::download('en')];
     }
 }

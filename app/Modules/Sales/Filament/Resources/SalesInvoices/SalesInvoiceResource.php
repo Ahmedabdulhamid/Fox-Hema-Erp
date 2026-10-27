@@ -40,7 +40,7 @@ class SalesInvoiceResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(SalesAccess::class)->scopeInvoices(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.variant.images', 'items.variant.product.images', 'location', 'salesOrder', 'createdBy', 'postedBy', 'items.deliveryMatches']);
+            ->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'location', 'salesOrder', 'createdBy', 'postedBy']);
     }
 
     public static function form(Schema $schema): Schema

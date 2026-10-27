@@ -2,17 +2,24 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Modules\AccessManagement\Models\User;
+use App\Modules\Payments\Services\CustomerAccess;
+use App\Modules\Payments\Services\CustomerFinancials;
+use App\Modules\Payments\Services\PaymentsPermissions;
 use App\Modules\Sales\Models\SalesInvoice;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 
 class SalesInvoicePdfData
 {
-    public function prepare(SalesInvoice $invoice, string $locale): array
+    public function prepare(SalesInvoice $invoice, string $locale, ?User $actor = null): array
     {
         $snapshot = $invoice->document_snapshot;
 
         return [
+            'settlement' => $actor !== null && app(CustomerAccess::class)->allows($actor, PaymentsPermissions::VIEW, (int) $invoice->location_id) && app(CustomerAccess::class)->ready()
+                ? app(CustomerFinancials::class)->invoice($actor, $invoice) : null,
+            'paymentLabel' => fn (string $key): string => trans('payments.'.$key, [], $locale),
             'locale' => $locale, 'direction' => $locale === 'ar' ? 'rtl' : 'ltr',
             'invoice' => $invoice, 'company' => $snapshot['company'], 'branch' => $snapshot['branch'],
             'orderNumber' => $snapshot['order_number'],

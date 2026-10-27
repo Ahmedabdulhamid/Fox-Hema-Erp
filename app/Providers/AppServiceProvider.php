@@ -15,15 +15,31 @@ use App\Modules\Inventory\Policies\StockBalancePolicy;
 use App\Modules\Inventory\Policies\StockMovementPolicy;
 use App\Modules\InventoryCosting\Services\SalesReturnValuationService;
 use App\Modules\InventoryCosting\Services\StockIssueValuationService;
+use App\Modules\Payments\Models\Customer;
+use App\Modules\Payments\Models\Payment;
+use App\Modules\Payments\Models\PaymentAllocation;
+use App\Modules\Payments\Models\PaymentMethod;
+use App\Modules\Payments\Models\PaymentRefund;
+use App\Modules\Payments\Observers\CustomerDocumentObserver;
+use App\Modules\Payments\Observers\PaymentMethodObserver;
+use App\Modules\Payments\Policies\CustomerPaymentPolicy;
+use App\Modules\Payments\Policies\CustomerPolicy;
+use App\Modules\Payments\Policies\PaymentAllocationPolicy;
+use App\Modules\Payments\Policies\PaymentMethodPolicy;
+use App\Modules\Payments\Policies\PaymentRefundPolicy;
+use App\Modules\Payments\Services\CustomerAccess;
 use App\Modules\Products\Filament\VariantInventoryValuationPanel;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
 use App\Modules\Purchasing\Models\Supplier;
 use App\Modules\Purchasing\Models\VendorBill;
+use App\Modules\Purchasing\Models\VendorPayment;
+use App\Modules\Purchasing\Observers\VendorPaymentObserver;
 use App\Modules\Purchasing\Policies\PurchaseOrderPolicy;
 use App\Modules\Purchasing\Policies\PurchaseReceiptPolicy;
 use App\Modules\Purchasing\Policies\SupplierPolicy;
 use App\Modules\Purchasing\Policies\VendorBillPolicy;
+use App\Modules\Purchasing\Policies\VendorPaymentPolicy;
 use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesDelivery;
 use App\Modules\Sales\Models\SalesInvoice;
@@ -34,6 +50,12 @@ use App\Modules\Sales\Policies\SalesDeliveryPolicy;
 use App\Modules\Sales\Policies\SalesInvoicePolicy;
 use App\Modules\Sales\Policies\SalesOrderPolicy;
 use App\Modules\Sales\Policies\SalesReturnPolicy;
+use App\Modules\Treasury\Models\TreasuryAccount;
+use App\Modules\Treasury\Models\TreasuryOperation;
+use App\Modules\Treasury\Observers\TreasuryAccountObserver;
+use App\Modules\Treasury\Observers\TreasuryOperationObserver;
+use App\Modules\Treasury\Policies\TreasuryAccountPolicy;
+use App\Modules\Treasury\Policies\TreasuryOperationPolicy;
 use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -49,6 +71,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(StockIssueValuationService::class);
         $this->app->scoped(SalesReturnValuationService::class);
         $this->app->scoped(DocumentNumberService::class);
+        $this->app->scoped(CustomerAccess::class);
         $this->app->extend('migrator', function (Migrator $migrator, $app): ModuleMigrator {
             $ordered = new ModuleMigrator($app['migration.repository'], $app['db'], $app['files'], $app['events']);
             foreach ($migrator->paths() as $path) {
@@ -64,6 +87,19 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        foreach ([Customer::class, Payment::class, PaymentAllocation::class, PaymentRefund::class] as $model) {
+            $model::observe(CustomerDocumentObserver::class);
+        }
+        Gate::policy(Customer::class, CustomerPolicy::class);
+        Gate::policy(Payment::class, CustomerPaymentPolicy::class);
+        Gate::policy(PaymentAllocation::class, PaymentAllocationPolicy::class);
+        Gate::policy(PaymentRefund::class, PaymentRefundPolicy::class);
+        $this->loadViewsFrom(app_path('Modules/Payments/Resources/views'), 'payments');
+        PaymentMethod::observe(PaymentMethodObserver::class);
+        Gate::policy(PaymentMethod::class, PaymentMethodPolicy::class);
+        TreasuryAccount::observe(TreasuryAccountObserver::class);
+        TreasuryOperation::observe(TreasuryOperationObserver::class);
+        VendorPayment::observe(VendorPaymentObserver::class);
         Livewire::component('variant-inventory-valuation', VariantInventoryValuationPanel::class);
         $this->loadMigrationsFrom(app(ModuleDiscovery::class)->migrationPaths());
         Gate::policy(SalesOrder::class, SalesOrderPolicy::class);
@@ -79,6 +115,10 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(PurchaseOrder::class, PurchaseOrderPolicy::class);
         Gate::policy(PurchaseReceipt::class, PurchaseReceiptPolicy::class);
         Gate::policy(VendorBill::class, VendorBillPolicy::class);
+        Gate::policy(VendorPayment::class, VendorPaymentPolicy::class);
+        Gate::policy(TreasuryAccount::class, TreasuryAccountPolicy::class);
+        Gate::policy(TreasuryOperation::class, TreasuryOperationPolicy::class);
+        $this->loadViewsFrom(app_path('Modules/Treasury/Resources/views'), 'treasury');
         $this->loadViewsFrom(app_path('Modules/Purchasing/Resources/views'), 'purchasing');
         $this->loadViewsFrom(app_path('Modules/Sales/Resources/views'), 'sales');
     }

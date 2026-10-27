@@ -64,6 +64,10 @@ class VendorBillForm
                 TextInput::make('bill_number')->label(__('Supplier invoice number'))->required()->maxLength(255),
                 DatePicker::make('bill_date')->label(__('Bill date'))->default(now())->required(),
                 DatePicker::make('due_date')->label(__('Due date'))->afterOrEqual('bill_date'),
+                Select::make('settlement_terms')->label(__('Commercial settlement terms'))
+                    ->options(['cash' => __('Cash'), 'credit' => __('Credit'), 'mixed' => __('Mixed')])->live()
+                    ->helperText(__('Commercial terms record intent only. Payment requires a posted payment and allocation.')),
+                TextInput::make('planned_immediate_amount')->label(__('Planned immediate settlement'))->suffix('EGP')->inputMode('decimal'),
                 Textarea::make('notes')->label(__('Notes'))->maxLength(16000)->columnSpanFull(),
                 Text::make(__('Draft bills do not reserve quantities. Posting checks the saved allocations.'))->columnSpanFull(),
             ]),
@@ -136,7 +140,7 @@ class VendorBillForm
         try {
             $price = app(PurchaseOrderCalculator::class)->decimal($price, 'unit_price', 18, 6);
             if (! BigDecimal::of($price)->isEqualTo($line->unit_cost)) {
-                $variance = ' | '.__('Price difference requires review').': '.(string) BigDecimal::of($price)->minus($line->unit_cost).' EGP';
+                $variance = ' | '.__('Price difference requires review').': '.MoneyFormatter::precise((string) BigDecimal::of($price)->minus($line->unit_cost));
             }
         } catch (ValidationException $exception) {
         }
@@ -144,8 +148,8 @@ class VendorBillForm
         return $line->purchaseReceipt->display_reference.' | '.__('Received quantity').': '.QuantityFormatter::format($line->quantity)
             .' | '.__('Previously billed').': '.QuantityFormatter::format((string) BigDecimal::of($line->quantity)->minus($remaining))
             .' | '.__('Remaining billable').': '.QuantityFormatter::format($remaining)
-            .' | '.__('PO unit price').': '.MoneyFormatter::format($line->purchaseOrderItem->unit_price)
-            .' | '.__('Receipt purchase cost').': '.MoneyFormatter::format($line->unit_cost).$variance;
+            .' | '.__('PO unit price').': '.MoneyFormatter::precise($line->purchaseOrderItem->unit_price)
+            .' | '.__('Receipt purchase cost').': '.MoneyFormatter::precise($line->unit_cost).$variance;
     }
 
     private static function preview(Get $get, bool $total = false): string

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Products\Filament;
 
+use App\Models\NumericFormatter;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\Products\Models\Brand;
 use App\Modules\Products\Services\CommercialMedia;
@@ -15,6 +16,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\View;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\HtmlString;
 
 class CommercialSelectors
@@ -70,12 +72,27 @@ class CommercialSelectors
         ];
     }
 
-    public static function definition(string $kind, string $usage): Select
+    public static function definition(string $kind, string $usage, bool $cacheOptions = false): Select
     {
         $tax = $kind === 'taxes';
         $query = fn (): Builder => app(CommercialDefinitions::class)->eligible($kind, $usage);
-        $label = fn ($definition): string => $definition->name.' · '.($tax ? $definition->rate : $definition->value).($definition->type === 'percentage' ? '%' : ' EGP');
-        $options = fn (string $search = ''): array => $query()->when(trim($search) !== '', fn ($query) => $query->where('name', 'like', '%'.trim($search).'%'))->orderBy('name')->limit(50)->get()->mapWithKeys(fn ($record): array => [$record->id => $label($record)])->all();
+        $label = fn ($definition): string => $definition->name.' · '.NumericFormatter::definition($tax ? $definition->rate : $definition->value, $definition->type);
+        $records = function (?array $ids = null, string $search = '') use ($query, $kind, $usage, $cacheOptions): Collection {
+            $generation = request()->attributes->get('fox.definition-options-generation', 0);
+            $key = 'fox.definition-options.'.hash('sha256', json_encode([$kind, $usage, $ids, trim($search), $generation], JSON_THROW_ON_ERROR));
+            if ($cacheOptions && request()->attributes->has($key)) {
+                return request()->attributes->get($key);
+            }
+            $definitions = $query()->when($ids !== null, fn ($query) => $query->whereKey($ids))
+                ->when(trim($search) !== '', fn ($query) => $query->where('name', 'like', '%'.trim($search).'%'))
+                ->orderBy('name')->when($ids === null, fn ($query) => $query->limit(50))->get();
+            if ($cacheOptions) {
+                request()->attributes->set($key, $definitions);
+            }
+
+            return $definitions;
+        };
+        $options = fn (string $search = ''): array => $records(search: $search)->mapWithKeys(fn ($record): array => [$record->id => $label($record)])->all();
         $fields = TaxForm::fields($kind, true);
         foreach ($fields as $field) {
             if (in_array($field->getName(), ['type', 'usage', 'scope', 'price_inclusion', 'is_stackable', 'is_active'], true)) {
@@ -90,10 +107,10 @@ class CommercialSelectors
         $select = Select::make($tax ? 'tax_ids' : 'discount_id')->label(__($tax ? 'Taxes' : 'Discount'))
             ->multiple($tax)->wrapOptionLabels(false)->searchable()->preload()->live()->default($tax ? [] : null)
             ->placeholder(__($tax ? 'No tax' : 'No discount'))
-            ->extraAttributes(fn (Get $get): array => ['title' => $query()->whereKey($tax ? ($get('tax_ids') ?? []) : array_filter([$get('discount_id')]))->pluck('name')->implode(', ')])
-            ->helperText(function (Get $get) use ($tax, $usage, $query): ?HtmlString {
+            ->extraAttributes(fn (Get $get): array => ['title' => $records($tax ? ($get('tax_ids') ?? []) : array_filter([$get('discount_id')]))->pluck('name')->implode(', ')])
+            ->helperText(function (Get $get) use ($tax, $usage, $records): ?HtmlString {
                 $ids = $tax ? ($get('tax_ids') ?? []) : array_filter([$get('discount_id')]);
-                foreach ($query()->whereKey($ids)->get() as $definition) {
+                foreach ($records($ids) as $definition) {
                     if ($definition->type !== 'percentage' || ($tax ? $definition->price_inclusion !== 'excluded' : $definition->is_stackable)) {
                         return new HtmlString(view('components.commercial-policy-note', ['message' => __('This definition needs an agreed fixed, included-tax or stacking policy. Choose another definition.')])->render());
                     }
@@ -105,12 +122,17 @@ class CommercialSelectors
                 return null;
             })
             ->options(fn (): array => $options())->getSearchResultsUsing(fn (string $search): array => $options($search))
-            ->getOptionLabelUsing(fn ($value): ?string => ($record = $query()->find($value)) === null ? null : $label($record))
+            ->getOptionLabelUsing(fn ($value): ?string => ($record = $records([$value])->first()) === null ? null : $label($record))
             ->createOptionForm($fields)
-            ->createOptionUsing(fn (array $data): int => app(CommercialDefinitions::class)->create(auth()->user(), $kind, $usage, $data))
+            ->createOptionUsing(function (array $data) use ($kind, $usage): int {
+                $id = app(CommercialDefinitions::class)->create(auth()->user(), $kind, $usage, $data);
+                request()->attributes->set('fox.definition-options-generation', request()->attributes->get('fox.definition-options-generation', 0) + 1);
+
+                return $id;
+            })
             ->createOptionAction(fn (Action $action): Action => $action->visible(fn (): bool => app(DefinitionAccess::class)->allows(auth()->user(), $kind, 'view') && app(DefinitionAccess::class)->allows(auth()->user(), $kind, 'create')));
         if ($tax) {
-            $select->getOptionLabelsUsing(fn (array $values): array => $query()->whereKey($values)->get()->mapWithKeys(fn ($record): array => [$record->id => $label($record)])->all());
+            $select->getOptionLabelsUsing(fn (array $values): array => $records($values)->mapWithKeys(fn ($record): array => [$record->id => $label($record)])->all());
         }
 
         return $select;

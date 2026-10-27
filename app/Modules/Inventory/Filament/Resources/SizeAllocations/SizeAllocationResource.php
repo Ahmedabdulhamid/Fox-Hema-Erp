@@ -3,16 +3,17 @@
 namespace App\Modules\Inventory\Filament\Resources\SizeAllocations;
 
 use App\Models\QuantityFormatter;
+use App\Modules\Inventory\Filament\InventoryFilters;
 use App\Modules\Inventory\Filament\Resources\SizeAllocations\Pages\CreateSizeAllocation;
 use App\Modules\Inventory\Filament\Resources\SizeAllocations\Pages\EditSizeAllocation;
 use App\Modules\Inventory\Filament\Resources\SizeAllocations\Pages\ListSizeAllocations;
 use App\Modules\Inventory\Filament\Resources\SizeAllocations\Pages\ViewSizeAllocation;
 use App\Modules\Inventory\Models\SizeAllocation;
+use App\Modules\Inventory\Models\SizeAllocationItem;
 use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Inventory\Services\SizeAllocationPresentation;
-use App\Modules\Products\Models\Product;
 use Brick\Math\BigDecimal;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
@@ -37,6 +38,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 
 class SizeAllocationResource extends Resource
 {
@@ -67,7 +69,7 @@ class SizeAllocationResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(InventoryAccess::class)->scope(parent::getEloquentQuery(), auth()->user(), InventoryPermissions::ALLOCATIONS_VIEW)
-            ->with(['product', 'location', 'items.variant.size', 'items.variant.color',
+            ->with(['product.images', 'product.brand', 'sourceVariant.images', 'sourceVariant.product.images', 'sourceVariant.product.brand', 'location', 'items.variant.size', 'items.variant.color',
                 'items.movements' => fn ($q) => $q->select(['id', 'uuid', 'reference_type', 'reference_id'])]);
     }
 
@@ -137,7 +139,7 @@ class SizeAllocationResource extends Resource
                             ->table([TableColumn::make(__('Size')), TableColumn::make(__('Allocate pieces')), TableColumn::make(__('Current available stock')), TableColumn::make(__('Quantity after allocation'))])
                             ->schema([
                                 Hidden::make('variant_id')->required()->hidden()->dehydratedWhenHidden(),
-                                TextEntry::make('size_display')->hiddenLabel()->state(fn (Get $get): string => ($get('size_label') ?? __('Size variant')).(filled($get('color_label')) ? ' / '.$get('color_label') : '')),
+                                TextEntry::make('size_display')->hiddenLabel()->state('variant')->formatStateUsing(fn (Get $get, ?SizeAllocation $record) => view('components.allocation-variant', ['variant' => self::presentationVariants($get, $record)->get($get('variant_id')), 'colorName' => $get('color_label'), 'sizeName' => $get('size_label')])),
                                 TextInput::make('quantity')->hiddenLabel()->required()->numeric()->minValue(0)->step(1)->inputMode('numeric')->live(debounce: 300)
                                     ->rules(['regex:/^\d{1,14}(?:\.0{1,4})?$/D'])
                                     ->prefixAction(Action::make('decrease')->label(__('Decrease quantity'))->icon('heroicon-m-minus')
@@ -180,6 +182,20 @@ class SizeAllocationResource extends Resource
             ->where('variant_id', $variantId)->where('location_id', $locationId)->first();
     }
 
+    private static function presentationVariants(Get $get, ?SizeAllocation $record): Collection
+    {
+        $productId = $get('../../product_id');
+        $variantIds = collect($get('../../items') ?? [])->pluck('variant_id')->filter(fn ($id): bool => is_scalar($id) && ctype_digit((string) $id))->unique()->sort()->values()->all();
+        $key = 'fox.allocation-color.'.hash('sha256', json_encode([$productId, $record?->getKey(), $variantIds], JSON_THROW_ON_ERROR));
+        if (! request()->attributes->has($key)) {
+            $variants = app(SizeAllocationPresentation::class)->targets(auth()->user(), $productId, record: $record)
+                ->whereKey($variantIds)->with(['color', 'size'])->get()->keyBy('id');
+            request()->attributes->set($key, $variants);
+        }
+
+        return request()->attributes->get($key);
+    }
+
     public static function grid(mixed $productId, mixed $colorId = null): array
     {
         return app(SizeAllocationPresentation::class)->grid(auth()->user(), $productId, $colorId);
@@ -212,19 +228,18 @@ class SizeAllocationResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table->columns([
+        return InventoryFilters::configure($table)->columns([
             TextColumn::make('reference')->label(__('Reference'))->searchable(),
-            TextColumn::make('product.name')->label(__('Product'))->searchable(),
+            TextColumn::make('product.name')->label(__('Product'))->searchable()->formatStateUsing(fn ($state, SizeAllocation $record) => view('components.inventory-product', ['variant' => $record->sourceVariant, 'title' => $state])),
             TextColumn::make('location.name')->label(__('Location')),
-            TextColumn::make('status')->label(__('Status'))->badge()->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
+            TextColumn::make('allocated_quantity')->label(__('Allocated pieces'))->badge()->color('info')->alignEnd()
+                ->state(fn (SizeAllocation $record): string => QuantityFormatter::format((string) $record->items->reduce(fn (BigDecimal $total, SizeAllocationItem $item): BigDecimal => $total->plus($item->quantity), BigDecimal::zero()))),
+            TextColumn::make('status')->label(__('Document status'))->badge()->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
             TextColumn::make('created_at')->label(__('Created at'))->dateTime(),
-            TextColumn::make('posted_at')->label(__('Posted at'))->dateTime(),
+            TextColumn::make('posted_at')->label(__('Posted at'))->dateTime()->placeholder('—'),
         ])->filters([
-            SelectFilter::make('product_id')->label(__('Product'))->options(fn (): array => Product::whereHas('variants.stockBalances',
-                fn ($query) => app(InventoryAccess::class)->scope($query, auth()->user(), InventoryPermissions::ALLOCATIONS_VIEW))->pluck('name', 'id')->all()),
-            SelectFilter::make('location_id')->label(__('Location'))->options(fn (): array => app(InventoryAccess::class)
-                ->locations(auth()->user(), InventoryPermissions::ALLOCATIONS_VIEW)->pluck('name', 'id')->all()),
-            SelectFilter::make('status')->label(__('Status'))->options(['draft' => __('Draft'), 'posted' => __('Posted'), 'cancelled' => __('Cancelled')]),
+            ...InventoryFilters::catalog(InventoryPermissions::ALLOCATIONS_VIEW, 'allocations', 'product_id', color: true),
+            SelectFilter::make('status')->label(__('Document status'))->options(['draft' => __('Draft'), 'posted' => __('Posted'), 'cancelled' => __('Cancelled')]),
         ])->recordActions([ViewAction::make(), EditAction::make()])->defaultSort('id', 'desc');
     }
 

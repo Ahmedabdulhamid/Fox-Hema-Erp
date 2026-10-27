@@ -16,7 +16,7 @@ class ColorForm
             Section::make(__('Color overview'))->icon('heroicon-o-swatch')->columns(2)->columnSpanFull()->schema([
                 TextInput::make('name')->label(__('Name'))->required()->maxLength(255),
                 TextInput::make('sort_order')->label(__('Sort order'))->integer()->minValue(0)->maxValue(4294967295)->default(0)->required(),
-                ColorPicker::make('hex_code')->label(__('Color code'))->rules(['nullable', 'regex:/^#[0-9a-fA-F]{6}$/']),
+                ColorPicker::make('hex_code')->label(__('Color'))->view('components.color-picker')->rules(['nullable', 'regex:/^#[0-9a-fA-F]{6}$/']),
                 Toggle::make('is_active')->label(__('Active'))->default(true),
             ]),
         ]);

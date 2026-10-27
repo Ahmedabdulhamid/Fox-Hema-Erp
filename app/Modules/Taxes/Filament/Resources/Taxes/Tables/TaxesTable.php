@@ -2,12 +2,17 @@
 
 namespace App\Modules\Taxes\Filament\Resources\Taxes\Tables;
 
+use App\Models\NumericFormatter;
+use App\Modules\Discounts\Filament\Resources\Discounts\Schemas\DiscountInfolist;
 use App\Modules\Discounts\Services\DiscountManager;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Taxes\Filament\Resources\Taxes\Schemas\TaxInfolist;
 use App\Modules\Taxes\Services\TaxManager;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Schemas\Schema;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
@@ -30,20 +35,20 @@ class TaxesTable
         $columns = [
             TextColumn::make('usage')->label(__('Usage'))->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
             TextColumn::make('name')->label(__('Name'))->searchable()->sortable(),
-            TextColumn::make('code')->label(__('Code'))->searchable()->toggleable(),
+            TextColumn::make('code')->label(__('Code'))->searchable()->toggleable(isToggledHiddenByDefault: true),
             TextColumn::make('type')->label(__('Type'))->formatStateUsing(fn (string $state): string => __($state === 'percentage' ? 'Percentage' : 'Fixed'))->sortable(),
-            TextColumn::make($tax ? 'rate' : 'value')->label(__($tax ? 'Rate' : 'Value'))->sortable(),
+            TextColumn::make($tax ? 'rate' : 'value')->formatStateUsing(fn ($state, $record): string => NumericFormatter::definition($state, $record->type))->extraAttributes(['class' => 'fox-numeric'])->label(__($tax ? 'Rate' : 'Value'))->sortable(),
             IconColumn::make('is_active')->label(__('Active'))->boolean(),
             TextColumn::make('products_count')->label(__('Products'))->counts('products'),
         ];
         if ($tax) {
             $columns = [...$columns,
-                TextColumn::make('price_inclusion')->label(__('Price inclusion'))->formatStateUsing(fn (string $state): string => __($state === 'included' ? 'Included' : 'Excluded'))->toggleable(),
+                TextColumn::make('price_inclusion')->label(__('Price inclusion'))->formatStateUsing(fn (string $state): string => __($state === 'included' ? 'Included' : 'Excluded'))->toggleable(isToggledHiddenByDefault: true),
             ];
         } else {
             $columns = [...$columns,
-                TextColumn::make('scope')->label(__('Scope'))->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
-                IconColumn::make('is_stackable')->label(__('Stackable'))->boolean()->toggleable(),
+                TextColumn::make('scope')->toggleable(isToggledHiddenByDefault: true)->label(__('Scope'))->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
+                IconColumn::make('is_stackable')->label(__('Stackable'))->boolean()->toggleable(isToggledHiddenByDefault: true),
             ];
         }
         $columns[] = TextColumn::make($start)->label(__($tax ? 'Effective from' : 'Starts at'))->dateTime()->toggleable(isToggledHiddenByDefault: true);
@@ -62,6 +67,7 @@ class TaxesTable
                     ->where(fn (Builder $query) => $query->whereNull($end)->when($tax, fn (Builder $query) => $query->orWhereDate($end, '>=', $now), fn (Builder $query) => $query->orWhere($end, '>=', $now)));
             }),
         ])->defaultSort('name')->recordActions([
+            MasterDetail::action(fn (Schema $schema): Schema => $tax ? TaxInfolist::configure($schema) : DiscountInfolist::configure($schema))->authorize('view'),
             ViewAction::make(), EditAction::make(),
             DeleteAction::make()->using(fn (Model $record): bool => ProductMutation::run(fn () => app($manager)->delete(auth()->user(), $record))),
         ]);

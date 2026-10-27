@@ -4,7 +4,7 @@
             @foreach (['subtotal' => 'invoices.subtotal', 'discount_amount' => 'invoices.discount', 'tax_amount' => 'invoices.tax', 'total_amount' => 'credits.total'] as $field => $label)
                 <div @class(['fox-credit-total' => $field === 'total_amount'])>
                     <dt>{{ __($label) }}</dt>
-                    <dd><bdi>{{ $totals[$field] }}</bdi></dd>
+                    <dd><bdi>{{ \App\Models\NumericFormatter::format($totals[$field], 'money') }}</bdi></dd>
                 </div>
             @endforeach
         </dl>

@@ -1,8 +1,7 @@
 @php
     use App\Models\MoneyFormatter;
     use App\Models\QuantityFormatter;
-    use Brick\Math\BigDecimal;
-    use Brick\Math\RoundingMode;
+    use App\Modules\InventoryCosting\Services\FifoLayerValue;
 @endphp
 <div class="space-y-6">
     <p class="text-sm text-gray-500 dark:text-gray-400">{{ __('Inventory valuation is location-specific. Reference cost and sale price are maintained separately.') }}</p>
@@ -46,9 +45,9 @@
                     <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Inventory value') }}</dt><dd class="text-xl font-semibold" dir="ltr">{{ $valuation['state'] ? MoneyFormatter::format($valuation['state']->total_value) : __('Not valued') }}</dd></div>
                     <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Valued quantity') }}</dt><dd dir="ltr">{{ QuantityFormatter::format($valuation['state']?->on_hand_qty) }}</dd></div>
                     @if ($valuation['method'] === 'avco')
-                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Average inventory cost') }}</dt><dd class="text-xl font-semibold" dir="ltr">{{ $valuation['state'] ? MoneyFormatter::format($valuation['state']->avg_cost) : __('Not valued') }}</dd></div>
+                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Average inventory cost') }}</dt><dd class="text-xl font-semibold" dir="ltr">{{ $valuation['state'] ? MoneyFormatter::precise($valuation['state']->avg_cost) : __('Not valued') }}</dd></div>
                     @elseif ($valuation['method'] === 'standard')
-                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Effective standard unit cost') }}</dt><dd dir="ltr">{{ $valuation['standard_problem'] ? __('Conflicting standard-cost revisions') : ($valuation['standard_revision'] ? MoneyFormatter::format($valuation['standard_revision']->new_cost) : __('No effective standard-cost revision')) }}</dd></div>
+                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Effective standard unit cost') }}</dt><dd dir="ltr">{{ $valuation['standard_problem'] ? __('Conflicting standard-cost revisions') : ($valuation['standard_revision'] ? MoneyFormatter::precise($valuation['standard_revision']->new_cost) : __('No effective standard-cost revision')) }}</dd></div>
                         @if ($valuation['standard_revision'] && ! $valuation['standard_problem'])
                             <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Effective date') }}</dt><dd>{{ $valuation['standard_revision']->effective_at->format('Y-m-d H:i:s') }}</dd></div>
                             <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Standard-cost revision') }}</dt><dd>#{{ $valuation['standard_revision']->id }}</dd></div>
@@ -72,8 +71,8 @@
                                             <td class="p-2">#{{ $layer->stock_movement_id }} @if ($layer->stockMovement?->reference_id) · {{ __('Receipt item') }} #{{ $layer->stockMovement->reference_id }} @endif</td>
                                             <td class="p-2" dir="ltr">{{ QuantityFormatter::format($layer->quantity) }}</td>
                                             <td class="p-2" dir="ltr">{{ QuantityFormatter::format($layer->remaining_qty) }}</td>
-                                            <td class="p-2" dir="ltr" title="{{ $layer->unit_cost }}">{{ MoneyFormatter::format($layer->unit_cost) }}</td>
-                                            <td class="p-2" dir="ltr">{{ MoneyFormatter::format((string) BigDecimal::of($layer->remaining_qty)->multipliedBy($layer->unit_cost)->toScale(4, RoundingMode::HalfUp)) }}</td>
+                                            <td class="p-2" dir="ltr" title="{{ $layer->unit_cost }}">{{ MoneyFormatter::precise($layer->unit_cost) }}</td>
+                                            <td class="p-2" dir="ltr">{{ MoneyFormatter::format((string) app(FifoLayerValue::class)->remaining($layer)) }}</td>
                                             <td class="p-2">{{ ($layer->received_at ?? $layer->created_at)?->format('Y-m-d H:i:s') }}</td>
                                         </tr>
                                     @empty
@@ -90,14 +89,14 @@
             <x-filament::section :heading="__('Purchase and catalog prices')">
                 <dl class="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     @if ($valuation['can_view_purchase'])
-                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Latest posted purchase unit cost') }}</dt><dd dir="ltr">{{ $valuation['latest_purchase'] ? MoneyFormatter::format($valuation['latest_purchase']->purchase_unit_cost) : __('No posted purchase cost') }}</dd>
+                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Latest posted purchase unit cost') }}</dt><dd dir="ltr">{{ $valuation['latest_purchase'] ? MoneyFormatter::precise($valuation['latest_purchase']->purchase_unit_cost) : __('No posted purchase cost') }}</dd>
                             @if ($valuation['latest_purchase']) <p class="text-sm text-gray-500">{{ $valuation['latest_purchase']->receipt_number }}</p> @endif
                         </div>
                     @endif
                     @if ($valuation['can_view_reference'])
-                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Reference cost') }}</dt><dd dir="ltr">{{ MoneyFormatter::format($valuation['reference_cost']) }}</dd></div>
+                        <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Reference cost') }}</dt><dd dir="ltr">{{ MoneyFormatter::precise($valuation['reference_cost']) }}</dd></div>
                     @endif
-                    <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Catalog sale price') }}</dt><dd dir="ltr">{{ MoneyFormatter::format($valuation['variant']->sale_price) }}</dd></div>
+                    <div><dt class="text-sm text-gray-500 dark:text-gray-400">{{ __('Catalog sale price') }}</dt><dd dir="ltr">{{ MoneyFormatter::precise($valuation['variant']->sale_price) }}</dd></div>
                 </dl>
             </x-filament::section>
         @else

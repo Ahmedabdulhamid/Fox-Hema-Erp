@@ -2,13 +2,18 @@
 @import './tokens.css';
 @import './workspaces.css';
 @import './commercial-lines.css';
+@import './order-forms.css';
+@import './inventory.css';
+@import './allocation-status.css';
+@import './inventory-insights.css';
+@import './master-detail.css';
 
 /* Future module resources and Blade components share the compiled design system. */
 @source '../../../../app/**/*';
 @source '../../../views/**/*';
 
 html { --font-family: var(--font-sans); }
-body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family: var(--font-sans); }
+body.fi-body { --topbar-height: 3.75rem; background: var(--fox-canvas); color: var(--fox-ink); font-family: var(--font-sans); }
 .fi-main, .fi-page, .fi-sc, .fi-sc-component, .fi-in-entry { min-width: 0; }
 .fi-main { max-width: 100%; padding-inline: clamp(.85rem, 1.6vw, 1.5rem); }
 .fi-page { gap: 1.25rem; }
@@ -18,11 +23,18 @@ body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family
 .fi-breadcrumbs { margin-block-end: .35rem; }
 .fi-breadcrumbs-item-label { color: var(--fox-muted); font-size: .75rem; }
 
-/* Preserve Filament's responsive positioning and collapse transitions. */
+/* Keep the desktop sidebar in the viewport, independent of page scroll height. */
+@media (min-width: 64rem) {
+    .fi-body-has-navigation:not(.fi-body-has-top-navigation):not(.fi-body-has-sidebar-collapsible-on-desktop):not(.fi-body-has-sidebar-fully-collapsible-on-desktop) {
+        & .fi-layout > div:has(> .fi-main-sidebar) { flex: 0 0 var(--sidebar-width); }
+        & .fi-main-sidebar { position: fixed; inset-block: 0; height: auto; }
+        &.fi-body-has-topbar .fi-main-sidebar { inset-block-start: var(--topbar-height); }
+    }
+}
 .fi-sidebar, .fi-sidebar-header { background: var(--fox-sidebar); }
 .fi-sidebar-header { border-block-end: 1px solid rgb(255 255 255 / 8%); box-shadow: none; padding-inline: 1rem; }
 .fi-sidebar .fi-logo { max-width: 12.5rem; height: auto; }
-.fi-sidebar-nav { padding: .65rem .75rem; }
+.fi-sidebar-nav { min-height: 0; padding: .65rem .75rem; }
 .fi-sidebar .fi-sidebar-group-label { color: #a4b4cb; font-size: .75rem; }
 .fi-sidebar .fi-sidebar-item-btn { min-height: 2.55rem; border-radius: .5rem; padding-inline: .75rem; transition: background-color .15s; }
 .fi-sidebar .fi-sidebar-item-label { color: #e5ecf6; font-size: .85rem; font-weight: 500; }
@@ -36,7 +48,6 @@ body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family
 
 /* One fixed-width border owns focus. Vendor ring utilities live in lower CSS layers. */
 .fi-body .fi-input-wrp,
-.fox-location-switcher select,
 .fox-permission-search,
 .fox-public-form input {
     border: 1.5px solid var(--fox-input-border);
@@ -49,11 +60,9 @@ body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family
     transition: border-color .15s;
 }
 .fi-body .fi-input-wrp:not(.fi-disabled):hover,
-.fox-location-switcher select:hover,
 .fox-permission-search:hover,
 .fox-public-form input:hover { border-color: var(--fox-input-hover); }
 .fi-body .fi-input-wrp:focus-within,
-.fox-location-switcher select:focus,
 .fox-permission-search:focus-within,
 .fox-public-form input:focus {
     border-color: var(--fox-input-focus);
@@ -157,3 +166,8 @@ body.fi-body { background: var(--fox-canvas); color: var(--fox-ink); font-family
 @media (prefers-reduced-motion: reduce) {
     .fi-input-wrp, .fi-sidebar-item-btn, .fi-ta-row, .fi-btn { transition: none; }
 }
+
+/* Shared numeric presentation; editable state remains a plain decimal. */
+.fox-numeric, bdi, .fi-wi-stats-overview-stat-value { font-variant-numeric: tabular-nums; }
+.fox-numeric :is(.fi-ta-text-item, .fi-in-text-item), bdi { white-space: nowrap; unicode-bidi: isolate; }
+.fox-numeric :is(.fi-ta-text-item, .fi-in-text-item) { direction: ltr; }

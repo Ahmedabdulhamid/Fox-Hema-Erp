@@ -1,0 +1,62 @@
+<?php
+
+return [
+    'payments' => 'Payments',
+    'singular' => 'Payment method',
+    'plural' => 'Payment methods',
+    'fields' => [
+        'code' => 'Code',
+        'name' => 'Name (Arabic / English)',
+        'type' => 'Type',
+        'is_active' => 'Status',
+        'requires_reference' => 'Requires transaction reference',
+        'sort_order' => 'Sort order',
+        'available_in_pos' => 'Availability',
+    ],
+    'types' => [
+        'cash' => 'Cash',
+        'bank_transfer' => 'Bank transfer',
+        'card' => 'Card',
+        'wallet' => 'Wallet',
+        'other' => 'Other',
+    ],
+    'status' => [
+        'active' => 'Active',
+        'inactive' => 'Inactive',
+        'all' => 'All statuses',
+    ],
+    'yes' => 'Yes',
+    'no' => 'No',
+    'name_help' => 'Enter Arabic, English, or both. Default methods have bilingual names.',
+    'type_help' => 'The type cannot change after creation. Create another method when a different type is needed.',
+    'status_help' => 'Deactivation prevents new use. Historical payment references are preserved.',
+    'actions' => [
+        'create' => 'Create payment method',
+        'view' => 'View',
+        'edit' => 'Edit',
+        'activate' => 'Activate',
+        'deactivate' => 'Deactivate',
+    ],
+    'notifications' => [
+        'created' => 'Payment method created',
+        'updated' => 'Payment method updated',
+        'failed' => 'Cannot save payment method',
+    ],
+    'validation' => [
+        'immutable' => 'Existing payment method codes and types are immutable; deactivate instead.',
+        'protected' => 'Unsupported or protected payment method fields.',
+        'active' => 'Select an active approved payment method.',
+        'reference' => 'This payment method requires a transaction reference.',
+        'denied' => 'You are not authorized to manage payment methods.',
+        'delete' => 'Payment methods cannot be deleted. Deactivate them instead.',
+        'rules' => [
+            'required' => 'The :attribute field is required.',
+            'string' => 'The :attribute must be text.',
+            'max' => 'The :attribute exceeds the maximum of :max.',
+            'min' => 'The :attribute must be at least :min.',
+            'integer' => 'The :attribute must be an integer.',
+            'boolean' => 'The :attribute must be true or false.',
+            'in' => 'Select a valid :attribute.',
+        ],
+    ],
+];

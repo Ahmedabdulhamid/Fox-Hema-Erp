@@ -113,7 +113,12 @@ class SalesOrderService
 
     public function revision(SalesOrder $order): string
     {
-        return hash('sha256', json_encode([$order->getAttributes(), $order->items()->orderBy('id')->get()->map->getAttributes()->all()], JSON_THROW_ON_ERROR));
+        $header = Arr::except($order->getAttributes(), [
+            'has_non_cancelled_sales_deliveries', 'has_downstream_sales_delivery_items', 'has_sales_invoices',
+            'has_sales_returns', 'has_sales_pos_transaction', 'has_consumed_sales_order_reservations',
+        ]);
+
+        return hash('sha256', json_encode([$header, $order->items()->orderBy('id')->get()->map->getAttributes()->all()], JSON_THROW_ON_ERROR));
     }
 
     /** Validate saved prices and eligibility without repricing or rewriting the draft. */

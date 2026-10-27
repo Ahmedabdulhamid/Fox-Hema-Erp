@@ -1,0 +1,11 @@
+.fox-inventory-color { display: inline-flex; align-items: center; gap: .4rem; color: inherit; }
+.fox-inventory-swatch { display: inline-block; flex: 0 0 .8rem; width: .8rem; height: .8rem; border: 1px solid var(--fox-input-border, var(--fox-border)); border-radius: 50%; }
+.fox-inventory-swatch.fox-color-unknown { background: var(--fox-canvas); border-style: dashed; }
+.fox-variant-summary { display: flex; flex-direction: column; align-items: start; gap: .3rem; font-size: .8rem; }
+.fox-master-detail-table { min-width: 0; }
+.fox-master-detail-table table { width: 100%; table-layout: auto; }
+.fox-master-detail-table .fi-in-text-item { overflow: visible; text-overflow: clip; }
+.fox-detail-drawer .fi-in-text-item:has(.fox-numeric), .fox-master-detail-table .fox-numeric { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fox-color-input { width: 3rem; height: 2.5rem; padding: .2rem; border: 1px solid var(--fox-border); border-radius: .5rem; background: var(--fox-surface); cursor: pointer; }
+.fox-color-input-empty::-webkit-color-swatch { background: var(--fox-canvas); border: 1px dashed var(--fox-border); }
+.fox-color-input-empty::-moz-color-swatch { background: var(--fox-canvas); border: 1px dashed var(--fox-border); }

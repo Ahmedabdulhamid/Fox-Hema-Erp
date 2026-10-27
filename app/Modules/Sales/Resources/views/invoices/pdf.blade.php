@@ -19,13 +19,14 @@ table { width: 100%; border-collapse: collapse; }
 .lines thead th { background: #11263e; color: #ffffff; padding: 10px 5px; text-align: center; }
 .lines td { padding: 10px 5px; border-bottom: 1px solid #dce7ed; vertical-align: top; }
 .stripe { background: #f3f8fa; }
-.num { direction: ltr; text-align: right; white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; direction: ltr; text-align: right; white-space: nowrap; }
 .muted { color: #637b8b; font-size: 7pt; }
 .summary { margin-top: 18px; page-break-inside: avoid; }
 .summary td { padding: 7px 10px; }
 .grand td { background: #11263e; color: #ffffff; border-top: 3px solid #13b8a6; font-size: 13pt; font-weight: bold; padding: 13px 10px; }
 .thanks { color: #087f78; font-size: 12pt; margin-top: 24px; font-weight: bold; }
 .notes { color: #526f82; margin-top: 8px; white-space: pre-wrap; }
+.fox-inventory-swatch { display: inline-block; width: 8px; height: 8px; border: 1px solid #a8b9b1; border-radius: 50%; }
 </style></head>
 <body dir="{{ $direction }}">
 <table class="masthead"><tr><td width="57%">
@@ -56,18 +57,24 @@ table { width: 100%; border-collapse: collapse; }
 <tr class="{{ $loop->even ? 'stripe' : '' }}">
 <td>{{ $loop->iteration }}</td><td><b>{{ $item->commercial_snapshot['product_name'] ?? $item->description }}</b>
 @if($item->description)<br><span class="muted">{{ $item->description }}</span>@endif</td>
-<td dir="ltr">{{ $item->commercial_snapshot['sku'] ?? '' }}</td><td>{{ $item->commercial_snapshot['size'] ?? '—' }}</td><td>{{ $item->commercial_snapshot['color'] ?? '—' }}</td>
-<td class="num">{{ $item->quantity }}</td><td class="num">{{ $money($item->unit_price) }}</td>
-<td class="num">{{ $money($item->discount_amount) }}</td><td class="num">{{ $money($item->tax_amount) }}</td><td class="num"><b>{{ $money($item->line_total) }}</b></td>
+<td dir="ltr">{{ $item->commercial_snapshot['sku'] ?? '' }}</td><td>{{ $item->commercial_snapshot['size'] ?? '—' }}</td><td><x-inventory-color :name="$item->commercial_snapshot['color'] ?? null" /></td>
+<td class="num">{{ \App\Models\QuantityFormatter::format($item->quantity) }}</td><td class="num">{{ \App\Models\MoneyFormatter::precise($item->unit_price, $invoice->currency) }}</td>
+<td class="num">{{ \App\Models\MoneyFormatter::format($item->discount_amount, $invoice->currency) }}</td><td class="num">{{ \App\Models\MoneyFormatter::format($item->tax_amount, $invoice->currency) }}</td><td class="num"><b>{{ \App\Models\MoneyFormatter::format($item->line_total, $invoice->currency) }}</b></td>
 </tr>
 @endforeach
 </tbody></table>
 <table class="summary"><tr><td width="48%"></td><td>
-<table><tr><td>{{ $label('subtotal') }}</td><td class="num">{{ $money($invoice->subtotal) }} {{ $invoice->currency }}</td></tr>
-<tr><td>{{ $label('discount') }}</td><td class="num">{{ $money($invoice->discount_amount) }} {{ $invoice->currency }}</td></tr>
-<tr><td>{{ $label('tax') }}</td><td class="num">{{ $money($invoice->tax_amount) }} {{ $invoice->currency }}</td></tr>
-<tr class="grand"><td>{{ $label('grand_total') }}</td><td class="num">{{ $money($invoice->total_amount) }} {{ $invoice->currency }}</td></tr></table>
+<table><tr><td>{{ $label('subtotal') }}</td><td class="num">{{ \App\Models\MoneyFormatter::format($invoice->subtotal, $invoice->currency) }}</td></tr>
+<tr><td>{{ $label('discount') }}</td><td class="num">{{ \App\Models\MoneyFormatter::format($invoice->discount_amount, $invoice->currency) }}</td></tr>
+<tr><td>{{ $label('tax') }}</td><td class="num">{{ \App\Models\MoneyFormatter::format($invoice->tax_amount, $invoice->currency) }}</td></tr>
+<tr class="grand"><td>{{ $label('grand_total') }}</td><td class="num">{{ \App\Models\MoneyFormatter::format($invoice->total_amount, $invoice->currency) }}</td></tr></table>
 </td></tr></table>
+@if($settlement ?? null)
+<table class="summary"><tr><td>{{ $paymentLabel('status.'.$settlement['payment_status']) }}</td>
+<td>{{ $paymentLabel('credited_amount') }}: {{ \App\Models\MoneyFormatter::format($settlement['credited'], $invoice->currency) }}</td>
+<td>{{ $paymentLabel('paid_amount') }}: {{ \App\Models\MoneyFormatter::format($settlement['paid'], $invoice->currency) }}</td>
+<td>{{ $paymentLabel('balances.outstanding') }}: {{ \App\Models\MoneyFormatter::format($settlement['outstanding'], $invoice->currency) }}</td></tr></table>
+@endif
 <div class="thanks">{{ $label('thanks') }}</div>
 @if($invoice->notes)<div class="notes">{{ $invoice->notes }}</div>@endif
 </body></html>

@@ -45,6 +45,7 @@ class VendorBillService
             $this->authorize($actor, PurchasingPermissions::BILLS_CREATE, $order);
             $header = $this->header($data, $order);
             $lines = $this->lines($order, $data['items'] ?? []);
+            $header += app(PurchaseSettlementTerms::class)->validate($data, $this->calculator->totals($lines)['total_amount']);
             $bill = new VendorBill($header + $this->calculator->totals($lines) + ['status' => 'draft', 'created_by' => $actor->id]);
             $bill->uuid = (string) Str::uuid7();
             app(DocumentNumberService::class)->allocate((int) $order->location_id, 'BILL', $bill->uuid);
@@ -65,6 +66,7 @@ class VendorBillService
             $this->checkRevision($bill, $revision);
             $header = $this->header($data, $order);
             $lines = $this->lines($order, $data['items'] ?? []);
+            $header += app(PurchaseSettlementTerms::class)->validate($data, $this->calculator->totals($lines)['total_amount']);
             foreach ($bill->items()->orderBy('id')->get() as $item) {
                 foreach ($item->receiptMatches as $match) {
                     $match->delete();
@@ -90,6 +92,7 @@ class VendorBillService
             $this->draft($bill);
             $this->checkRevision($bill, $revision);
             $this->header($bill->only(['supplier_id', 'purchase_order_id', 'bill_number', 'bill_date', 'due_date', 'notes']), $order);
+            app(PurchaseSettlementTerms::class)->validate($bill->only(['settlement_terms', 'planned_immediate_amount', 'bill_date', 'due_date']), $bill->total_amount);
             $items = $bill->items()->orderBy('id')->lockForUpdate()->get();
             $data = $items->map(fn ($item): array => $item->only(['variant_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount'])
                 + ['allocations' => $item->receiptMatches()->orderBy('purchase_receipt_item_id')->lockForUpdate()->get()
@@ -199,7 +202,7 @@ class VendorBillService
     private function header(array $data, PurchaseOrder $order): array
     {
         $data = DocumentSelectors::normalizeInput($data);
-        if (array_diff(array_keys($data), ['supplier_id', 'purchase_order_id', 'bill_number', 'bill_date', 'due_date', 'notes', 'items']) !== []) {
+        if (array_diff(array_keys($data), ['supplier_id', 'purchase_order_id', 'bill_number', 'bill_date', 'due_date', 'notes', 'items', 'settlement_terms', 'planned_immediate_amount']) !== []) {
             $this->invalid('bill', 'Bill status, totals and audit fields are controlled by bill operations.');
         }
         Validator::make($data, ['supplier_id' => ['required', 'integer'], 'purchase_order_id' => ['required', 'integer'],

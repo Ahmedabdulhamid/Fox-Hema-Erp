@@ -3,6 +3,7 @@
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Schemas;
 
 use App\Models\QuantityFormatter;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\PurchaseReceiptResource;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Services\PurchaseReceiptService;
@@ -29,16 +30,15 @@ class PurchaseOrderInfolist
                 TextEntry::make('confirmedBy.name')->label(__('Confirmed by')), TextEntry::make('confirmed_at')->label(__('Confirmed at'))->dateTime(),
             ]),
             Section::make(__('Ordered items'))->description(__('These are ordered quantities and agreed prices; this document does not prove goods receipt.'))->schema([
-                RepeatableEntry::make('items')->label(__('Order lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-commercial-lines fox-commercial-saved'])
-                    ->table(array_map(fn ($label) => TableColumn::make(__($label))->wrapHeader(),
-                        ['Brand / Product', 'Variant', 'Quantity', 'Unit price', 'Discounts', 'Taxes', 'Line total']))->schema([
+                RepeatableEntry::make('items')->label(__('Order lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-master-detail-table'])
+                    ->table(array_map(fn (string $label): TableColumn => TableColumn::make(__($label))->wrapHeader(),
+                        ['Product', 'Variant', 'Quantity', 'Unit price', 'Line total', 'View Details']))->schema([
                             TextEntry::make('variant_label')->formatStateUsing(fn ($state, $record) => view('components.commercial-product-cell', ['variant' => $record->variant, 'title' => $state]))->label(__('Product'))->state(fn ($record): string => $record->variant->displayName()),
-                            TextEntry::make('variant_details')->label(__('Variant'))->state(fn ($record): string => implode(' ? ', array_filter([$record->variant?->size?->name, $record->variant?->color?->name, $record->variant?->sku]))),
-                            TextEntry::make('quantity')->formatStateUsing(fn (?string $state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => QuantityFormatter::format($state)]))->label(__('Ordered quantity')),
-                            TextEntry::make('unit_price')->label(__('Unit purchase price (EGP)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state])),
-                            TextEntry::make('discount_amount')->label(__('Discounts'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'discount', 'amount' => $state])),
-                            TextEntry::make('tax_amount')->label(__('Taxes'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'tax', 'amount' => $state])),
-                            TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
+                            View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->variant]),
+                            TextEntry::make('quantity')->formatStateUsing(fn (?string $state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => QuantityFormatter::format($state), 'kind' => 'quantity']))->label(__('Ordered quantity')),
+                            TextEntry::make('unit_price')->label(__('Unit purchase price (EGP)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state, 'kind' => 'precise'])),
+                            TextEntry::make('line_total')->label(__('Line total')),
+                            MasterDetail::entry(fn (): array => self::lineDetails()),
                         ]),
             ]),
             Group::make()->columns(['default' => 1, 'lg' => 12])->columnSpanFull()->schema([
@@ -60,5 +60,22 @@ class PurchaseOrderInfolist
                     ]),
                 ]),
         ])->columns(1);
+    }
+
+    private static function lineDetails(): array
+    {
+        return [
+            Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('variant_label')->formatStateUsing(fn ($state, $record) => view('components.commercial-product-cell', ['variant' => $record->variant, 'title' => $state]))->label(__('Product'))->state(fn ($record): string => $record->variant->displayName()),
+                View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->variant]),
+            ]),
+            Section::make(__('Financial totals'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('quantity')->formatStateUsing(fn (?string $state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => QuantityFormatter::format($state), 'kind' => 'quantity']))->label(__('Ordered quantity')),
+                TextEntry::make('unit_price')->label(__('Unit purchase price (EGP)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state, 'kind' => 'precise'])),
+                TextEntry::make('discount_amount')->label(__('Discounts'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'discount', 'amount' => $state])),
+                TextEntry::make('tax_amount')->label(__('Taxes'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'tax', 'amount' => $state])),
+                TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
+            ]),
+        ];
     }
 }

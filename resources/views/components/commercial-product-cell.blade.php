@@ -8,6 +8,7 @@
                 @include('components.commercial-brand-preview', ['brand' => $variant->product->brand, 'imageUrl' => app(\App\Modules\Products\Services\CommercialMedia::class)->publicUrl($variant->product->brand->icon, 'brands/icons/')])
             @endif
         <strong>{{ $title ?? $variant?->displayName() ?? __('Choose a product') }}</strong>
+        @if ($variant)<x-inventory-variant :variant="$variant" />@endif
         <small><bdi>{{ $variant?->sku ?? '—' }}</bdi></small>
     </div>
 </div>

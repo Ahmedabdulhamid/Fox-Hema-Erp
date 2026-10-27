@@ -2,9 +2,9 @@
 
 namespace App\Modules\Products\Services;
 
-use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Auth\Access\AuthorizationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
@@ -12,12 +12,12 @@ class ProductsAccess
 {
     public function authorize(User $actor, string $permission): void
     {
-        abort_unless($actor->exists && ! $actor->trashed() && User::query()->whereKey($actor->id)->where('is_active', true)->exists(), 403);
+        abort_unless($actor->exists && ! $actor->trashed() && RequestAuthorizationFacts::actorIsActive($actor), 403);
         app(ModuleAccess::class)->authorize($actor, 'products', $permission);
         if (! $actor->isGlobalSuperAdmin()) {
             $location = getPermissionsTeamId();
-            abort_unless($location !== null && Location::whereKey($location)->where('is_active', true)->exists()
-                && $actor->locations()->whereKey($location)->exists(), 403);
+            abort_unless($location !== null && RequestAuthorizationFacts::locationIsActive((int) $location)
+                && RequestAuthorizationFacts::actorHasLocation($actor, (int) $location), 403);
         }
     }
 

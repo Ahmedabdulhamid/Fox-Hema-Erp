@@ -41,7 +41,8 @@ class SalesOrdersTable
             ])->query(fn (Builder $query, array $data): Builder => $query
                 ->when($data['from'] ?? null, fn (Builder $query, $date): Builder => $query->whereDate('ordered_at', '>=', $date))
                 ->when($data['until'] ?? null, fn (Builder $query, $date): Builder => $query->whereDate('ordered_at', '<=', $date))),
-        ])->recordActions([ViewAction::make(), EditAction::make(), ...SalesOrderActions::make()])->toolbarActions([])
+        ])->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items')->withRowActionFacts())
+            ->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), ...SalesOrderActions::make()])->toolbarActions([])
             ->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 }

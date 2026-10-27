@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
@@ -107,6 +108,10 @@ class Location extends Model
             config('permission.table_names.roles'), config('permission.table_names.model_has_roles'),
             config('permission.table_names.model_has_permissions'),
         ];
+
+        if (Schema::hasTable('treasury_accounts')) {
+            $tables[] = 'treasury_accounts';
+        }
 
         foreach ($tables as $table) {
             $query = $this->getConnection()->table($table)->where('location_id', $this->getKey());

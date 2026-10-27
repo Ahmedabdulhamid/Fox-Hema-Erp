@@ -6,6 +6,7 @@ use App\Models\Concerns\HasPublicUuid;
 use App\Modules\AccessManagement\Database\Factories\UserFactory;
 use App\Modules\AccessManagement\Services\LocationContext;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\AccessManagement\Services\SuperAdminProtection;
 use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryStandardCostRevision;
@@ -45,7 +46,7 @@ class User extends Authenticatable implements FilamentUser
 {
     use HasPublicUuid;
 
-    public const PANEL_PERMISSIONS = ['users.view', 'roles.view', 'permissions.view', 'locations.view', 'sessions.view', 'auth_events.view', 'modules.view', 'products.view', 'products.brands.view', 'products.categories.view', 'products.sizes.view', 'products.colors.view', 'taxes.view', 'discounts.view', 'inventory.stock_balances.view', 'inventory.stock_movements.view', 'purchasing.suppliers.view', 'purchasing.purchase_orders.view', 'purchasing.receipts.view', 'purchasing.vendor_bills.view', 'sales.orders.view', 'sales.deliveries.view'];
+    public const PANEL_PERMISSIONS = ['users.view', 'roles.view', 'permissions.view', 'locations.view', 'sessions.view', 'auth_events.view', 'modules.view', 'products.view', 'products.brands.view', 'products.categories.view', 'products.sizes.view', 'products.colors.view', 'taxes.view', 'discounts.view', 'inventory.stock_balances.view', 'inventory.stock_movements.view', 'purchasing.suppliers.view', 'purchasing.purchase_orders.view', 'purchasing.receipts.view', 'purchasing.vendor_bills.view', 'purchasing.vendor_payments.view', 'payments.view', 'treasury.accounts.view', 'sales.orders.view', 'sales.deliveries.view'];
 
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, SoftDeletes;
@@ -202,7 +203,9 @@ class User extends Authenticatable implements FilamentUser
 
     public function isGlobalSuperAdmin(): bool
     {
-        return DB::table(config('permission.table_names.model_has_roles').' as assignments')
+        RequestAuthorizationFacts::trackActor($this);
+
+        return RequestAuthorizationFacts::remember('global-super-admin:'.json_encode([$this->getMorphClass(), $this->getKey()], JSON_THROW_ON_ERROR), fn (): bool => DB::table(config('permission.table_names.model_has_roles').' as assignments')
             ->join(config('permission.table_names.roles').' as roles', 'roles.id', '=', 'assignments.role_id')
             ->where('assignments.model_type', $this->getMorphClass())
             ->where('assignments.model_id', $this->getKey())
@@ -210,7 +213,7 @@ class User extends Authenticatable implements FilamentUser
             ->whereNull('roles.location_id')
             ->where('roles.name', 'super_admin')
             ->where('roles.guard_name', 'web')
-            ->exists();
+            ->exists());
     }
 
     public function canAccessPanel(Panel $panel): bool

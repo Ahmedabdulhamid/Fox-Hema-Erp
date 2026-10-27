@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\BeginAuthorizationRequest;
 use App\Http\Middleware\SetLocale;
 use App\Modules\AccessManagement\Http\Middleware\EnsureModuleActive;
 use App\Modules\AccessManagement\Http\Middleware\ResetLocationPermissionContext;
@@ -17,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias(['module.active' => EnsureModuleActive::class]);
+        $middleware->web(prepend: [BeginAuthorizationRequest::class]);
         $middleware->web(append: [SetLocale::class, ResetLocationPermissionContext::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

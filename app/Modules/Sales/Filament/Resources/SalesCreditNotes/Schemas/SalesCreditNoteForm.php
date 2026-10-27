@@ -55,7 +55,7 @@ class SalesCreditNoteForm
                     return [
                         'rows' => $rows,
                         'invoiceItems' => SalesInvoiceItem::query()->whereIn('id', array_column($rows, 'invoice_item_id'))
-                            ->with(['variant.images', 'variant.product.images'])->get()->keyBy('id'),
+                            ->with(['variant.images', 'variant.product.images', 'variant.product.brand', 'variant.color', 'variant.size'])->get()->keyBy('id'),
                     ];
                 })->columnSpanFull(),
                 Repeater::make('items')->label(__('invoices.items'))->defaultItems(1)->minItems(1)->maxItems(200)->reorderable(false)->addActionLabel(__('credits.add_line'))->columns(['default' => 1, 'lg' => 3])->live()->schema([

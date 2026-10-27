@@ -10,6 +10,22 @@ use Illuminate\Validation\ValidationException;
 
 class DocumentNumberService
 {
+    /** Global financial identities are separate from existing location-scoped document types. */
+    public const FINANCIAL_SOURCES = [
+        'PM' => ['TPM', 'payment_methods', 'code'],
+        'CUS' => ['TCU', 'payment_customers', 'code'],
+        'RCPT' => ['TRCPT', 'payments', 'payment_number'],
+        'ALLOC' => ['TALLOC', 'payment_allocations', 'code'],
+        'RFND' => ['TRFND', 'payment_refunds', 'refund_number'],
+        'TR' => ['TA', 'treasury_accounts', 'code'],
+        'CR' => ['TCR', 'treasury_operations', 'code'],
+        'CP' => ['TCP', 'treasury_operations', 'code'],
+        'TRF' => ['TTRF', 'treasury_operations', 'code'],
+        'SP' => ['TSP', 'vendor_payments', 'payment_number'],
+        'OB' => ['TOB', 'treasury_operations', 'code'],
+        'REV' => ['TREV', 'treasury_operations', 'code'],
+    ];
+
     private array $installedConnections = [];
 
     public function installed(): bool
@@ -83,6 +99,55 @@ class DocumentNumberService
         ]);
 
         return $number;
+    }
+
+    /** Reuse the registry and locked sequences; central ownership never requires a fabricated location. */
+    public function allocateFinancial(string $prefix, string $uuid): string
+    {
+        if (DB::transactionLevel() === 0) {
+            throw new \LogicException('Financial numbering requires the owning creation transaction.');
+        }
+        if (! isset(self::FINANCIAL_SOURCES[$prefix]) || ! Str::isUuid($uuid)) {
+            throw ValidationException::withMessages(['number' => __('documents.invalid_identity')]);
+        }
+        [$type, $table, $column] = self::FINANCIAL_SOURCES[$prefix];
+        ModuleRegistryLock::acquire();
+        $uuid = strtolower($uuid);
+        $existing = DB::table('document_numbers')->where('document_type', $type)->where('document_uuid', $uuid)->lockForUpdate()->first();
+        if ($existing !== null) {
+            if ($existing->location_id !== null) {
+                throw ValidationException::withMessages(['number' => __('documents.identity_conflict')]);
+            }
+
+            return $existing->number;
+        }
+        if (DB::table($table)->where('uuid', $uuid)->exists()) {
+            throw ValidationException::withMessages(['number' => __('documents.historical_numbering_forbidden')]);
+        }
+        DB::table('document_number_sequences')->insertOrIgnore([
+            'location_id' => null, 'document_type' => $type, 'global_scope' => $type, 'location_code' => $prefix, 'last_number' => 0,
+        ]);
+        $sequence = DB::table('document_number_sequences')->where('global_scope', $type)->lockForUpdate()->first();
+        $next = (int) $sequence->last_number;
+        do {
+            $number = self::financialCode($prefix, ++$next);
+        } while ($this->exists($number) || DB::table($table)->where($column, $number)->exists());
+        DB::table('document_number_sequences')->where('id', $sequence->id)->update(['last_number' => $next]);
+        DB::table('document_numbers')->insert([
+            'location_id' => null, 'document_type' => $type, 'document_uuid' => $uuid, 'number' => $number,
+            'sequence_value' => $next, 'created_at' => now(),
+        ]);
+
+        return $number;
+    }
+
+    public static function financialCode(string $prefix, int $sequence): string
+    {
+        if (! isset(self::FINANCIAL_SOURCES[$prefix]) || $sequence < 1 || $sequence > 999999999999) {
+            throw ValidationException::withMessages(['number' => __('documents.sequence_exhausted')]);
+        }
+
+        return $prefix.'-'.str_pad((string) $sequence, 6, '0', STR_PAD_LEFT);
     }
 
     /** Indexed collision checks protect manually supplied legacy references; never MAX(number). */

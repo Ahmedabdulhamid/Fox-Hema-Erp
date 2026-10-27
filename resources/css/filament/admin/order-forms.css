@@ -1,0 +1,72 @@
+.fox-order-form { align-items: start; gap: 1rem; }
+.fox-order-form > .fi-sc { align-items: start; }
+.fox-order-form .fi-sc { gap: 1rem; }
+.fox-order-form .fi-section { border-radius: .75rem; }
+.fox-order-form .fi-section-header { border-block-end: 0; padding: .9rem 1rem; }
+.fox-order-form .fi-section-header-heading { font-size: .95rem; font-weight: 750; }
+.fox-order-form .fi-section-header-icon { color: var(--fox-action); background: var(--fox-primary-soft); padding: .4rem; width: 2.4rem; height: 2.4rem; border-radius: .65rem; }
+.fox-order-form .fi-section-content { padding: .25rem 1rem 1rem; }
+.fox-order-form .fi-input-wrp { min-width: 0; border-color: var(--fox-border); background: var(--fox-surface); }
+.fox-order-form .fi-input-wrp:hover { border-color: var(--fox-input-hover); }
+.fox-order-form .fi-input-wrp:focus-within { border-color: var(--fox-input-focus); }
+.fox-order-form .fi-input-wrp.fi-invalid { border-color: var(--fox-danger); }
+.fox-order-form .fi-fo-field-label-content { font-size: .8rem; }
+.fox-order-form .fi-fo-field-wrp-helper-text { font-size: .7rem; }
+.fox-order-form .fi-fo-repeater-item { border-color: var(--fox-border); box-shadow: none; border-radius: .65rem; }
+.fox-order-form .fi-fo-repeater-item-header { background: var(--fox-canvas); padding: .5rem .8rem; border-radius: .65rem .65rem 0 0; }
+.fox-order-form .fi-fo-repeater-item-header-label { color: var(--fox-ink); font-size: .75rem; font-weight: 700; }
+.fox-order-form .fi-fo-repeater-item-content { padding: 1rem; border-color: var(--fox-border); }
+.fox-order-form .fi-fo-repeater-add { justify-content: start; }
+.fox-order-form .fi-fo-repeater-add .fi-btn { min-width: 11rem; }
+.fox-order-product, .fox-order-variant { min-width: 0; padding-block-end: .8rem; border-block-end: 1px solid var(--fox-border); }
+.fox-order-form .fox-commercial-product { gap: 1rem; min-height: 5rem; }
+.fox-order-form .fox-commercial-product > img { width: 4.5rem; height: 4.5rem; flex-basis: 4.5rem; border-color: var(--fox-border); border-radius: .6rem; }
+.fox-order-form .fox-commercial-product strong { font-size: 1rem; font-weight: 750; line-height: 1.5; color: var(--fox-ink); }
+.fox-order-form .fox-commercial-product small { margin-block-start: .25rem; font-size: .73rem; color: var(--fox-muted); }
+.fox-order-form .fox-commercial-brand { color: var(--fox-primary-dark); font-size: .72rem; margin-block-end: .25rem; }
+.fox-order-form .fox-line-catalog-picker { border: 0; box-shadow: none; background: transparent; }
+.fox-order-form .fox-line-catalog-picker .fi-section-header { padding: .25rem 0; }
+.fox-order-form .fox-line-catalog-picker .fi-section-header-heading { color: var(--fox-action); font-size: .75rem; }
+.fox-order-form .fox-line-catalog-picker .fi-section-content { padding: .5rem 0 0; }
+.fox-order-form .fox-commercial-value { color: var(--fox-ink); font-size: .8rem; min-height: 0; white-space: normal; }
+.fox-order-form .fox-commercial-mobile-label { display: block; color: var(--fox-muted); font-size: .68rem; font-weight: 500; }
+.fox-order-form .fox-commercial-value[data-commercial-value='subtotal'] { color: var(--fox-muted); font-size: .7rem; }
+.fox-order-form .fox-commercial-value[data-commercial-value='subtotal'] .fox-commercial-mobile-label { font-size: .68rem; }
+.fox-order-line-total { padding: .75rem; border-radius: .6rem; background: var(--fox-primary-soft); }
+.fox-order-form .fox-commercial-value-total { color: var(--fox-action); font-size: 1.05rem; font-weight: 750; }
+.fox-order-form .fox-order-line-notes { border: 0; background: var(--fox-canvas); box-shadow: none; border-radius: .5rem; }
+.fox-order-form .fox-order-line-notes .fi-section-header { padding: .4rem .65rem; background: transparent; }
+.fox-order-form .fox-order-line-notes .fi-section-header-heading { color: var(--fox-muted); font-size: .72rem; font-weight: 500; }
+.fox-order-form .fox-order-line-notes .fi-section-header-icon { padding: 0; width: 1rem; height: 1rem; background: transparent; color: var(--fox-muted); }
+.fox-order-form .fox-order-line-notes .fi-section-content { padding: .5rem .65rem .65rem; }
+.fox-order-aside { min-width: 0; }
+.fox-order-form .fox-commercial-summary { font-size: .8rem; }
+.fox-order-form .fox-commercial-summary > div { padding: .65rem 0; border-color: var(--fox-border); }
+.fox-order-form .fox-commercial-summary > .fox-credit-total { display: grid; gap: .35rem; padding: .85rem; background: var(--fox-primary-soft); color: var(--fox-action); }
+.fox-order-form .fox-commercial-summary > .fox-credit-total dd { font-size: 1.35rem; }
+.fox-order-form .fox-commercial-notice, .fox-order-form .fox-commercial-policy-note { color: var(--fox-muted); }
+.fox-order-form :is(.fi-input-wrp-content-ctn, .fi-select-input, .fi-select-input-ctn, .fi-select-input-value-ctn, .fi-select-input-value-label, .fi-select-input-value-badges-ctn, .fi-badge-label-ctn) { min-width: 0; max-width: 100%; }
+.fox-order-form .fi-select-input-value-label { white-space: normal; overflow-wrap: anywhere; }
+.fox-order-form .fi-select-input-btn { min-height: 2.75rem; }
+.fox-order-form .fi-select-input-value-badges-ctn { flex-wrap: wrap; }
+.fox-order-form .fi-badge { max-width: 100%; }
+.fox-order-form .fi-badge-label { white-space: normal; overflow-wrap: anywhere; }
+@media (min-width: 80rem) {
+    .fox-order-form > .fi-sc > .fi-sc-component:has(> .fox-order-aside) { position: sticky; inset-block-start: calc(var(--topbar-height) + 1rem); }
+}
+@media (max-width: 39.999rem) {
+    .fox-order-form .fi-fo-repeater-item-content { padding: .75rem; }
+    .fox-order-form .fi-section-content { padding-inline: .75rem; }
+    .fox-order-form .fox-commercial-product > img { width: 3.5rem; height: 3.5rem; flex-basis: 3.5rem; }
+    .fox-order-form .fox-commercial-product strong { font-size: .9rem; }
+}
+body.fi-body:has(.fox-order-form) { background: var(--fox-order-canvas); }
+html:not(.dark) .fi-page:has(.fox-order-form) {
+    --fox-action: var(--fox-order-primary);
+    --fox-primary-dark: var(--fox-order-primary);
+    --fox-primary-soft: var(--fox-order-summary);
+    --fox-surface: var(--fox-order-surface);
+    --fox-canvas: var(--fox-order-canvas);
+    --fox-border: var(--fox-order-border);
+    --fox-input-border: var(--fox-order-border);
+}

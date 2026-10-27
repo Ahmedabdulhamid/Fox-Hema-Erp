@@ -44,7 +44,7 @@ class SalesInvoicePdfService
             app(SalesInvoiceService::class)->verifyPosted($invoice);
             abort_if($invoice->items()->count() > config('sales-invoices.pdf.max_lines'), 422);
 
-            return $this->data->prepare($invoice, $locale);
+            return $this->data->prepare($invoice, $locale, $actor);
         });
         $mpdf = new Mpdf($configuration);
         $mpdf->SetDirectionality($prepared['direction']);

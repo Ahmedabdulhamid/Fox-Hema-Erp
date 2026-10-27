@@ -14,6 +14,7 @@ use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\InventoryCosting\Services\CategoryCostingManager;
 use App\Modules\InventoryCosting\Services\EstimatedCostResolver;
+use App\Modules\InventoryCosting\Services\FifoLayerValue;
 use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
@@ -82,9 +83,14 @@ class VariantInventoryValuation
         if ($method === 'fifo') {
             $query = $variant->fifoLayers()->where('remaining_qty', '>', '0')
                 ->whereHas('stockMovement', fn (Builder $movement): Builder => $movement->where('location_id', $locationId));
-            $aggregate = (clone $query)->selectRaw('COALESCE(SUM(remaining_qty), 0) AS remaining_quantity, COALESCE(SUM(ROUND(remaining_qty * unit_cost, 4)), 0) AS remaining_value')->first();
-            $fifoValue = (string) $aggregate->remaining_value;
-            $fifoQuantity = (string) $aggregate->remaining_quantity;
+            $value = BigDecimal::of('0.0000');
+            $quantity = BigDecimal::of('0.0000');
+            foreach ((clone $query)->cursor() as $layer) {
+                $value = $value->plus(app(FifoLayerValue::class)->remaining($layer));
+                $quantity = $quantity->plus($layer->remaining_qty);
+            }
+            $fifoValue = (string) $value->toScale(4);
+            $fifoQuantity = (string) $quantity->toScale(4);
             $layers = $query->with('stockMovement')->orderBy('received_at')->orderBy('id')
                 ->paginate(10, ['*'], 'valuationLayers', max(1, $page));
         }

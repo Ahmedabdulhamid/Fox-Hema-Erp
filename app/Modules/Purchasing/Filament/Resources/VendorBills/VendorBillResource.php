@@ -41,8 +41,7 @@ class VendorBillResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(PurchasingAccess::class)->scopeBills(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.variant.images', 'items.variant.product.images', 'supplier', 'purchaseOrder.location', 'items.variant.product', 'items.receiptMatches.purchaseReceiptItem.purchaseReceipt',
-                'items.receiptMatches.purchaseReceiptItem.purchaseOrderItem']);
+            ->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'purchaseOrder.location', 'items.variant.product']);
     }
 
     public static function form(Schema $schema): Schema

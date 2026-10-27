@@ -33,7 +33,7 @@ class CreateSizeAllocation extends CreateRecord
 
     public function getPageClasses(): array
     {
-        return [...parent::getPageClasses(), 'allocation-page'];
+        return [...parent::getPageClasses(), 'allocation-page', 'fox-inventory-page'];
     }
 
     protected function allocationIsReady(): bool

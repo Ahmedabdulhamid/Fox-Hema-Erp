@@ -28,6 +28,11 @@
     --fox-radius: .75rem;
     --fox-control-radius: .5rem;
     --fox-shadow: 0 2px 8px rgb(19 36 65 / 4%);
+    --fox-order-primary: #008b76;
+    --fox-order-canvas: #f5f8fc;
+    --fox-order-surface: #ffffff;
+    --fox-order-summary: #e3f7f2;
+    --fox-order-border: #dce5ef;
 }
 html.dark {
     color-scheme: dark;
@@ -45,4 +50,9 @@ html.dark {
     --fox-input-disabled: #203149;
     --fox-danger: #f87171;
     --fox-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+    --fox-order-primary: #5eead4;
+    --fox-order-canvas: var(--fox-canvas);
+    --fox-order-surface: var(--fox-surface);
+    --fox-order-summary: var(--fox-primary-soft);
+    --fox-order-border: var(--fox-border);
 }

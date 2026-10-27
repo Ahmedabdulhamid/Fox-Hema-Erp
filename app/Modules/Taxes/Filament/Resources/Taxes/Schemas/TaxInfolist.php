@@ -2,6 +2,7 @@
 
 namespace App\Modules\Taxes\Filament\Resources\Taxes\Schemas;
 
+use App\Models\NumericFormatter;
 use Filament\Infolists\Components\IconEntry;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
@@ -19,7 +20,7 @@ class TaxInfolist
             TextEntry::make('name')->label(__('Name'))->weight('bold'),
             TextEntry::make('code')->label(__('Code'))->placeholder(__('Not recorded')),
             TextEntry::make('type')->label(__('Type'))->formatStateUsing(fn (string $state): string => __($state === 'percentage' ? 'Percentage' : 'Fixed')),
-            TextEntry::make($tax ? 'rate' : 'value')->label(__($tax ? 'Rate' : 'Value')),
+            TextEntry::make($tax ? 'rate' : 'value')->formatStateUsing(fn ($state, $record): string => NumericFormatter::definition($state, $record->type))->extraAttributes(['class' => 'fox-numeric'])->label(__($tax ? 'Rate' : 'Value')),
             IconEntry::make('is_active')->label(__('Active'))->boolean(),
             TextEntry::make('products_count')->label(__('Products'))->state(fn ($record): int => $record->products()->count()),
         ];

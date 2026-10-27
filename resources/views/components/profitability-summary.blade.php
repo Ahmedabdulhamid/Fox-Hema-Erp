@@ -10,7 +10,7 @@
                 @if (($profitability[$key] ?? null) === null)
                     {{ __('N/A') }}
                 @elseif (in_array($key, ['margin', 'markup']))
-                    {{ $profitability[$key] }}%
+                    {{ \App\Models\PercentageFormatter::format($profitability[$key]) }}
                 @else
                     {{ \App\Models\MoneyFormatter::format($profitability[$key]) }}
                 @endif

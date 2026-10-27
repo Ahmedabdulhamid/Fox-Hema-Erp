@@ -45,15 +45,15 @@ class ImagesRelationManager extends RelationManager
         return $schema->components([
             ProductImageFields::upload()->required(fn (string $operation): bool => $operation === 'create'),
             Select::make('product_variant_id')->label(__('Variant (optional)'))->options(fn (): array => $this->getOwnerRecord()->variants()->with(['size', 'color'])->get()
-                ->mapWithKeys(fn (ProductVariant $variant): array => [$variant->id => $variant->imageLabel()])->all())->searchable(),
+                ->mapWithKeys(fn (ProductVariant $variant): array => [$variant->id => view('components.variant-summary', ['variant' => $variant])->render()])->all())->searchable()->allowHtml(),
             ...ProductImageFields::metadata(),
         ]);
     }
 
     public function table(Table $table): Table
     {
-        return $table->recordTitleAttribute('alt_text')->defaultSort('sort_order')->columns([
-            ImageColumn::make('path')->label(__('Image'))->disk(fn (ProductImage $record): string => $record->disk), TextColumn::make('variant_label')->label(__('Variant'))->state(fn (ProductImage $record): string => $record->variant?->imageLabel() ?? __('General product')), TextColumn::make('variant.size.name')->label(__('Size'))->placeholder('—'), TextColumn::make('variant.color.name')->label(__('Color'))->placeholder('—'), TextColumn::make('alt_text')->label(__('Alternative text')), IconColumn::make('is_primary')->label(__('Primary image'))->boolean(), TextColumn::make('sort_order')->label(__('Sort order'))->sortable(),
+        return $table->recordTitleAttribute('alt_text')->defaultSort('sort_order')->modifyQueryUsing(fn ($query) => $query->with(['variant.color', 'variant.size']))->columns([
+            ImageColumn::make('path')->label(__('Image'))->disk(fn (ProductImage $record): string => $record->disk), TextColumn::make('variant_label')->label(__('Variant'))->state(__('General product'))->formatStateUsing(fn (ProductImage $record) => $record->variant ? view('components.variant-summary', ['variant' => $record->variant]) : __('General product')), TextColumn::make('variant.size.name')->toggleable(isToggledHiddenByDefault: true)->label(__('Size'))->placeholder('—'), TextColumn::make('variant.color.name')->toggleable(isToggledHiddenByDefault: true)->label(__('Color'))->placeholder('—'), TextColumn::make('alt_text')->label(__('Alternative text')), IconColumn::make('is_primary')->label(__('Primary image'))->boolean(), TextColumn::make('sort_order')->label(__('Sort order'))->sortable(),
         ])->headerActions([
             CreateAction::make()->using(fn (array $data): ProductImage => ProductMutation::run(fn () => app(ProductImageManager::class)->save(auth()->user(), $this->getOwnerRecord(), $data), $this->getMountedActionSchema()?->getStatePath())),
         ])->recordActions([

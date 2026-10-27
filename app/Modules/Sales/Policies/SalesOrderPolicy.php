@@ -46,7 +46,7 @@ class SalesOrderPolicy
     {
         return in_array($order->status, ['draft', 'confirmed'], true) && $order->fulfillment_status === 'unfulfilled'
             && ! $order->hasDownstreamDocuments() && $this->view($user, $order)
-            && ! $order->reservations()->where('quantity_consumed', '>', '0')->exists()
+            && ! $order->hasConsumedReservations()
             && app(SalesAccess::class)->allows($user, SalesPermissions::CANCEL, (int) $order->location_id);
     }
 

@@ -20,10 +20,10 @@ class ProductVariantFields
     {
         $access = app(ProductsAccess::class);
         $size = Select::make('size_id')->label(__('Size'))->searchable()->preload();
-        $color = Select::make('color_id')->label(__('Color'))->searchable()->preload();
+        $color = Select::make('color_id')->label(__('Color'))->searchable()->preload()->allowHtml()->getOptionLabelFromRecordUsing(fn (Color $record): string => view('components.inventory-color', ['color' => $record])->render());
         if ($duringProductCreation) {
             $size->options(fn (): array => Size::where('is_active', true)->orderBy('sort_order')->pluck('name', 'id')->all());
-            $color->options(fn (): array => Color::where('is_active', true)->orderBy('sort_order')->pluck('name', 'id')->all());
+            $color->options(fn (): array => Color::where('is_active', true)->orderBy('sort_order')->get(['id', 'name', 'hex_code'])->mapWithKeys(fn (Color $record): array => [$record->id => view('components.inventory-color', ['color' => $record])->render()])->all());
         } else {
             $size->relationship('size', 'name', modifyQueryUsing: fn ($query, ?ProductVariant $record) => $query->where(fn ($query) => $query->where('is_active', true)->orWhere('id', $record?->size_id)));
             $color->relationship('color', 'name', modifyQueryUsing: fn ($query, ?ProductVariant $record) => $query->where(fn ($query) => $query->where('is_active', true)->orWhere('id', $record?->color_id)));

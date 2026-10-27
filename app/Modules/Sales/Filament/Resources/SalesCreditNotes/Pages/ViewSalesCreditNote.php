@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesCreditNotes\Pages;
 
+use App\Modules\Payments\Filament\CustomerSettlementActions;
 use App\Modules\Sales\Filament\ReportsSalesValidationErrors;
 use App\Modules\Sales\Filament\Resources\SalesCreditNotes\SalesCreditNoteResource;
 use App\Modules\Sales\Filament\SalesCreditNoteActions;
@@ -16,7 +17,7 @@ class ViewSalesCreditNote extends ViewRecord
 
     protected function getHeaderActions(): array
     {
-        return [EditAction::make(), SalesCreditNoteActions::post(),
+        return [CustomerSettlementActions::refundCreditNote(), EditAction::make(), SalesCreditNoteActions::post(),
             SalesCreditNoteActions::download('ar'), SalesCreditNoteActions::download('en')];
     }
 }

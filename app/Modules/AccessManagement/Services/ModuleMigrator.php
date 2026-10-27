@@ -10,7 +10,7 @@ class ModuleMigrator extends Migrator
     /** Prerequisite modules must finish before their dependent modules start. */
     private const ORDER = [
         'AccessManagement', 'Products', 'Inventory', 'InventoryCosting', 'Purchasing',
-        'Discounts', 'Taxes', 'Sales', 'POS', 'StockTransfer', 'Payments',
+        'Discounts', 'Taxes', 'Sales', 'POS', 'StockTransfer', 'Payments', 'Treasury',
     ];
 
     public function getMigrationFiles($paths): array

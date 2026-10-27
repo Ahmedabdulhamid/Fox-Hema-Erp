@@ -19,7 +19,8 @@
         .name { max-width:100%; overflow-wrap:anywhere; }
         @page { size:{{ $paperWidth }}mm {{ $paperHeight }}mm; margin:5mm; }
         @media print { .controls { display:none; } body { margin:0; } .label { border:0; break-inside:avoid; } }
-    </style>
+    .fox-inventory-swatch { display: inline-block; width: 8px; height: 8px; border: 1px solid #a8b9b1; border-radius: 50%; }
+</style>
 </head>
 <body>
     <div class="controls">
@@ -31,7 +32,7 @@
     </div>
     <article class="label">
         <div class="name">{{ $variant->product->name }}</div>
-        <div>{{ __('Size') }}: {{ $variant->size?->name ?? __('No size') }} / {{ __('Color') }}: {{ $variant->color?->name ?? __('No color') }}</div>
+        <div>{{ __('Size') }}: {{ $variant->size?->name ?? __('No size') }} / {{ __('Color') }}: <x-inventory-color :color="$variant->color" /></div>
         @if($svg){!! $svg !!}@else<p>{{ __('Barcode unavailable') }}</p>@endif
         <div class="identifier">{{ $variant->barcode ?: __('No barcode') }}</div>
         <div class="identifier">{{ __('SKU') }}: {{ $variant->sku }}</div>

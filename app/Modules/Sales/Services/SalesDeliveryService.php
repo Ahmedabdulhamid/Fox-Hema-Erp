@@ -128,9 +128,7 @@ class SalesDeliveryService
             && $delivery->posting_payload_hash === null && $delivery->posting_evidence_hash === null && $delivery->posting_revision === null
             && $delivery->cancelled_at !== null && $delivery->cancellation_payload_hash !== null
             && hash_equals($delivery->cancellation_payload_hash, $this->contentHash($delivery))
-            && ! $delivery->items()->whereNotNull('stock_movement_id')->exists()
-            && ! $delivery->items()->whereHas('invoiceMatches')->exists()
-            && ! $delivery->items()->whereHas('returnItems')->exists();
+            && ! $this->hasDeliveryItemEvidence($delivery);
     }
 
     public function eligibleOrders(?User $actor): Builder
@@ -261,9 +259,30 @@ class SalesDeliveryService
 
     private function contentHash(SalesDelivery $delivery): string
     {
+        $items = $delivery->relationLoaded('items')
+            ? $delivery->items->sortBy('id')->values()->map->getAttributes()->all()
+            : $delivery->items()->orderBy('id')->get()->map->getAttributes()->all();
+
         return hash('sha256', json_encode([$delivery->uuid, $delivery->delivery_number, $delivery->created_by,
             $delivery->sales_order_id, $delivery->location_id, $delivery->notes,
-            $delivery->delivered_at?->format('Y-m-d H:i:s'), $delivery->items()->orderBy('id')->get()->map->getAttributes()->all()], JSON_THROW_ON_ERROR));
+            $delivery->delivered_at?->format('Y-m-d H:i:s'), $items], JSON_THROW_ON_ERROR));
+    }
+
+    private function hasDeliveryItemEvidence(SalesDelivery $delivery): bool
+    {
+        if ($delivery->relationLoaded('items') && $delivery->items->every(
+            fn ($item): bool => $item->relationLoaded('invoiceMatches') && $item->relationLoaded('returnItems'),
+        )) {
+            return $delivery->items->contains(
+                fn ($item): bool => $item->stock_movement_id !== null
+                    || $item->invoiceMatches->isNotEmpty()
+                    || $item->returnItems->isNotEmpty(),
+            );
+        }
+
+        return $delivery->items()->whereNotNull('stock_movement_id')->exists()
+            || $delivery->items()->whereHas('invoiceMatches')->exists()
+            || $delivery->items()->whereHas('returnItems')->exists();
     }
 
     private function payloadHash(SalesOrder $order, array $header, array $lines): string

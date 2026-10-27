@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Schemas;
 
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Sales\Filament\Resources\SalesOrders\Tables\SalesOrdersTable;
 use App\Modules\Sales\Models\SalesOrder;
 use App\Modules\Sales\Models\SalesStockReservation;
@@ -35,20 +36,15 @@ class SalesOrderInfolist
                 TextEntry::make('cancelled_at')->label(__('Cancelled at'))->dateTime(),
             ]),
             Section::make(__('Sales order items'))->schema([
-                RepeatableEntry::make('items')->label(__('Order lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-commercial-lines fox-commercial-saved'])
-                    ->table(array_map(fn ($label) => TableColumn::make(__($label))->wrapHeader(),
-                        ['Brand / Product', 'Variant', 'Quantity', 'Unit price', 'Discounts', 'Taxes', 'Line total']))->schema([
+                RepeatableEntry::make('items')->label(__('Order lines'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-master-detail-table'])
+                    ->table(array_map(fn (string $label): TableColumn => TableColumn::make(__($label))->wrapHeader(),
+                        ['Product', 'Variant', 'Quantity', 'Unit price', 'Line total', 'View Details']))->schema([
                             TextEntry::make('description')->formatStateUsing(fn ($state, $record) => view('components.commercial-product-cell', ['variant' => $record->variant, 'title' => $state]))->label(__('Product')),
-                            TextEntry::make('variant_details')->label(__('Variant'))->state(fn ($record): string => implode(' ? ', array_filter([$record->variant?->size?->name, $record->variant?->color?->name, $record->variant?->sku]))),
-                            TextEntry::make('quantity')->label(__('Quantity'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => $state])),
-                            TextEntry::make('unit_price')->label(__('Unit selling price (EGP, excluding tax)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state])),
-                            TextEntry::make('discount_amount')->label(__('Discounts'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'discount', 'amount' => $state])),
-                            TextEntry::make('tax_amount')->label(__('Taxes'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'tax', 'amount' => $state])),
-                            Group::make()->schema([
-                                TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
-                                View::make('components.profitability-line')->visible(fn ($record): bool => app(SalesProfitability::class)->canView(auth()->user(), (int) $record->salesOrder->location_id))
-                                    ->viewData(fn ($record): array => ['profitability' => self::profitability($record->salesOrder)['lines'][$record->id] ?? null]),
-                            ]),
+                            View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->variant]),
+                            TextEntry::make('quantity')->label(__('Quantity'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => $state, 'kind' => 'quantity'])),
+                            TextEntry::make('unit_price')->label(__('Unit selling price (EGP, excluding tax)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state, 'kind' => 'precise'])),
+                            TextEntry::make('line_total')->label(__('Line total')),
+                            MasterDetail::entry(fn (): array => self::lineDetails()),
                         ]),
             ]),
             Group::make()->columns(['default' => 1, 'lg' => 12])->columnSpanFull()->schema([
@@ -61,9 +57,9 @@ class SalesOrderInfolist
             ]),
             Section::make(__('Stock reservations'))->schema([
                 RepeatableEntry::make('reservations')->label(__('Reservation history'))
-                    ->state(fn (SalesOrder $record) => $record->reservations()->with(['variant.product', 'variant.size', 'variant.color'])->orderBy('variant_id')->get())
+                    ->state(fn (SalesOrder $record) => $record->reservations()->with(['variant.product.images', 'variant.product.brand', 'variant.images', 'variant.size', 'variant.color'])->orderBy('variant_id')->get())
                     ->columns(4)->schema([
-                        TextEntry::make('variant_label')->label(__('Product'))->state(fn (SalesStockReservation $record): string => $record->variant->displayName())->columnSpanFull(),
+                        TextEntry::make('variant_label')->label(__('Product'))->state(fn (SalesStockReservation $record): string => $record->variant->displayName())->formatStateUsing(fn ($record) => view('components.commercial-product-cell', ['variant' => $record->variant]))->columnSpanFull(),
                         TextEntry::make('quantity_reserved')->label(__('Originally reserved')),
                         TextEntry::make('quantity_consumed')->label(__('Consumed quantity')),
                         TextEntry::make('quantity_released')->label(__('Released quantity')),
@@ -82,5 +78,26 @@ class SalesOrderInfolist
         }
 
         return request()->attributes->get($key);
+    }
+
+    private static function lineDetails(): array
+    {
+        return [
+            Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('description')->formatStateUsing(fn ($state, $record) => view('components.commercial-product-cell', ['variant' => $record->variant, 'title' => $state]))->label(__('Product')),
+                View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->variant]),
+            ]),
+            Section::make(__('Financial totals'))->columns(['default' => 1, 'sm' => 2])->schema([
+                TextEntry::make('quantity')->label(__('Quantity'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Quantity'), 'value' => $state, 'kind' => 'quantity'])),
+                TextEntry::make('unit_price')->label(__('Unit selling price (EGP, excluding tax)'))->formatStateUsing(fn ($state) => view('components.commercial-line-value', ['label' => __('Unit price'), 'value' => $state, 'kind' => 'precise'])),
+                TextEntry::make('discount_amount')->label(__('Discounts'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'discount', 'amount' => $state])),
+                TextEntry::make('tax_amount')->label(__('Taxes'))->formatStateUsing(fn ($state, $record) => view('components.commercial-snapshot-cell', ['snapshot' => $record->commercial_snapshot, 'kind' => 'tax', 'amount' => $state])),
+                Group::make()->schema([
+                    TextEntry::make('line_total')->label(__('Line total (EGP)'))->formatStateUsing(fn ($state, $record) => view('components.commercial-line-value', ['label' => __('Line total'), 'value' => $state, 'emphasized' => true, 'subtotal' => $record->subtotal])),
+                    View::make('components.profitability-line')->visible(fn ($record): bool => app(SalesProfitability::class)->canView(auth()->user(), (int) $record->salesOrder->location_id))
+                        ->viewData(fn ($record): array => ['profitability' => self::profitability($record->salesOrder)['lines'][$record->id] ?? null]),
+                ]),
+            ]),
+        ];
     }
 }

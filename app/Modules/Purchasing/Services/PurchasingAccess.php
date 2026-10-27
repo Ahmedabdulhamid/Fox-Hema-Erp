@@ -5,6 +5,7 @@ namespace App\Modules\Purchasing\Services;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -14,14 +15,14 @@ class PurchasingAccess
     public function authorize(User $actor, string $permission, ?int $locationId = null): void
     {
         abort_unless($actor->exists && ! $actor->trashed()
-            && User::whereKey($actor->id)->where('is_active', true)->exists(), 403);
+            && RequestAuthorizationFacts::actorIsActive($actor), 403);
         abort_unless(in_array($permission, PurchasingPermissions::all(), true), 403);
         app(ModuleAccess::class)->authorize($actor, 'purchasing', $permission);
         if (! $actor->isGlobalSuperAdmin()) {
             $location = getPermissionsTeamId();
             abort_unless($location !== null && ($locationId === null || (int) $location === $locationId)
-                && Location::whereKey($location)->where('is_active', true)->exists()
-                && $actor->locations()->whereKey($location)->exists(), 403);
+                && RequestAuthorizationFacts::locationIsActive((int) $location)
+                && RequestAuthorizationFacts::actorHasLocation($actor, (int) $location), 403);
         }
     }
 

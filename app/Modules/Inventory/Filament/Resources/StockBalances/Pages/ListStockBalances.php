@@ -2,12 +2,18 @@
 
 namespace App\Modules\Inventory\Filament\Resources\StockBalances\Pages;
 
+use App\Modules\Inventory\Filament\InventoryListRecords;
 use App\Modules\Inventory\Filament\Resources\StockBalances\StockBalanceResource;
-use Filament\Resources\Pages\ListRecords;
 
-class ListStockBalances extends ListRecords
+class ListStockBalances extends InventoryListRecords
 {
     protected static string $resource = StockBalanceResource::class;
+
+    /** @return array<string> */
+    public function getPageClasses(): array
+    {
+        return [...parent::getPageClasses(), 'fox-stock-balances-page'];
+    }
 
     public function getSubheading(): ?string
     {

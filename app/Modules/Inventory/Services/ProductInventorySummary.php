@@ -27,7 +27,8 @@ class ProductInventorySummary
                     $unallocated = $unallocated->plus($balance->quantity_on_hand);
                 }
                 $rows[] = ['label' => $balance->variant->imageLabel(), 'sku' => $balance->variant->sku,
-                    'on_hand' => $balance->quantity_on_hand, 'available' => $balance->quantity_available];
+                    'is_unallocated' => $balance->variant->isUnallocated(), 'color' => $balance->variant->color?->name ?? __('No color'),
+                    'on_hand' => $balance->quantity_on_hand, 'reserved' => $balance->quantity_reserved, 'available' => $balance->quantity_available];
             }
             $locations[] = ['id' => $id, 'name' => $group->first()->location->name,
                 'total' => (string) $total, 'unallocated' => (string) $unallocated, 'rows' => $rows];

@@ -21,6 +21,16 @@ class ViewSizeAllocation extends ViewRecord
     #[Locked]
     public string $revision;
 
+    public function getPageClasses(): array
+    {
+        return [...parent::getPageClasses(), 'fox-inventory-page'];
+    }
+
+    public function getSubheading(): ?string
+    {
+        return __('Review document posting status and exact allocation evidence.');
+    }
+
     public function mount(int|string $record): void
     {
         parent::mount($record);

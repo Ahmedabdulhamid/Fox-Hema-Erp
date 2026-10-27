@@ -5,6 +5,7 @@ namespace App\Modules\Inventory\Services;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Data\SystemPostingContext;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
@@ -15,13 +16,13 @@ class InventoryAccess
 {
     public function authorize(User $actor, string $permission, ?int $locationId = null): void
     {
-        abort_unless($actor->exists && ! $actor->trashed() && User::whereKey($actor->id)->where('is_active', true)->exists(), 403);
+        abort_unless($actor->exists && ! $actor->trashed() && RequestAuthorizationFacts::actorIsActive($actor), 403);
         app(ModuleAccess::class)->authorize($actor, 'inventory', $permission);
         if (! $actor->isGlobalSuperAdmin()) {
             $scope = getPermissionsTeamId();
             abort_unless($scope !== null && ($locationId === null || (int) $scope === $locationId)
-                && Location::whereKey($scope)->where('is_active', true)->exists()
-                && $actor->locations()->whereKey($scope)->exists(), 403);
+                && RequestAuthorizationFacts::locationIsActive((int) $scope)
+                && RequestAuthorizationFacts::actorHasLocation($actor, (int) $scope), 403);
         }
     }
 

@@ -4,6 +4,7 @@ namespace App\Modules\Sales\Filament\Resources\SalesReturns\Schemas;
 
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Sales\Models\SalesReturn;
 use App\Modules\Sales\Models\SalesReturnItem;
 use App\Modules\Sales\Services\SalesReturnQuantityService;
@@ -51,7 +52,7 @@ class SalesReturnInfolist
             TextEntry::make('quantity')->label(__('returns.quantity')),
         ])->columns(2);
         $costAccess = fn (): bool => app(InventoryAccess::class)->allows(auth()->user(), InventoryPermissions::COST);
-        $lines[] = RepeatableEntry::make('costAllocations')->label(__('returns.physical_evidence'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence'])->schema([
+        $lines[] = RepeatableEntry::make('costAllocations')->label(__('returns.physical_evidence'))->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-master-detail-table'])->schema([
             TextEntry::make('quantity')->label(__('returns.quantity')),
             TextEntry::make('disposition')->label(__('returns.disposition'))->formatStateUsing(fn ($s) => __('returns.'.$s)),
             TextEntry::make('stockMovement.display_reference')->label(__('returns.movement_reference')),
@@ -61,24 +62,24 @@ class SalesReturnInfolist
             TextEntry::make('carrying_value')->label(__('returns.carrying_value'))->visible($costAccess),
             TextEntry::make('return_variance')->label(__('returns.return_variance'))->visible($costAccess),
             TextEntry::make('loss_value')->label(__('returns.loss_value'))->visible($costAccess),
-        ])->columns(3);
+        ])->columns(['default' => 1, 'sm' => 2]);
 
         return $schema->components([
             View::make('components.document-overview')->columnSpanFull(),
             Section::make(__('returns.return'))->schema($header)->columns(3),
             Section::make(__('returns.items'))->schema([
-                RepeatableEntry::make('items')->key('return-line-table')->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence'])
-                    ->table(array_map(fn ($label) => TableColumn::make(__('returns.'.$label))->wrapHeader(),
-                        ['product', 'sku', 'size', 'color', 'quantity', 'disposition', 'delivery_line']))->schema([
-                            TextEntry::make('variant.product.name')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->variant, 'title' => $state])), TextEntry::make('variant.sku'), TextEntry::make('variant.size.name'),
-                            TextEntry::make('variant.color.name'), TextEntry::make('quantity'),
-                            TextEntry::make('disposition')->formatStateUsing(fn ($state) => __('returns.'.$state)),
-                            TextEntry::make('salesDeliveryItem.salesDelivery.display_reference'),
-                        ]),
-            ]),
-            Section::make(__('documents.evidence'))->collapsible()->collapsed()->schema([
-                RepeatableEntry::make('items')->key('return-line-evidence')->label(__('returns.items'))->columnSpanFull()
-                    ->schema($lines)->columns(['default' => 1, 'md' => 2, 'xl' => 4]),
+                RepeatableEntry::make('items')->key('return-line-table')->columnSpanFull()->extraAttributes(['class' => 'erp-document-evidence fox-master-detail-table'])
+                    ->table(array_map(fn (string $label): TableColumn => TableColumn::make(__($label))->wrapHeader(), ['Product', 'Variant', 'Quantity', 'Disposition', 'View Details']))->schema([
+                        TextEntry::make('variant.product.name')->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->variant, 'title' => $state])),
+                        View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->variant]),
+                        TextEntry::make('quantity')->label(__('returns.quantity')),
+                        TextEntry::make('disposition')->label(__('returns.disposition'))->formatStateUsing(fn ($state) => __('returns.'.$state)),
+                        MasterDetail::entry(function (SalesReturnItem $record) use ($lines): array {
+                            $record->loadMissing(['invoiceAllocations.salesInvoice', 'postedAllocations.salesInvoice', 'costAllocations.stockMovement', 'costAllocations.quarantineReceipt', 'costAllocations.scrapReceipt']);
+
+                            return [Section::make(__('Line details'))->schema($lines)->columns(['default' => 1, 'sm' => 2])];
+                        }),
+                    ]),
             ]),
         ])->columns(1);
     }

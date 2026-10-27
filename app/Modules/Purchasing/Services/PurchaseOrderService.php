@@ -48,7 +48,7 @@ class PurchaseOrderService
                 foreach ($header as $field => $value) {
                     $existingHeader[$field] = in_array($field, ['order_date', 'expected_date'], true) ? $existing->{$field}?->format('Y-m-d') : $existing->{$field};
                 }
-                if ($existingHeader !== $header || $existingLines !== array_values($lines)) {
+                if ($existingHeader !== $header || $this->normalizeSnapshot($existingLines) !== $this->normalizeSnapshot(array_values($lines))) {
                     $this->invalid('submission_id', 'This submission identity was already used for different order details.');
                 }
 

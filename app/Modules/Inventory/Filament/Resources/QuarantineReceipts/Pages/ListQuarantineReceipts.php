@@ -2,11 +2,18 @@
 
 namespace App\Modules\Inventory\Filament\Resources\QuarantineReceipts\Pages;
 
+use App\Modules\Inventory\Filament\InventoryListRecords;
 use App\Modules\Inventory\Filament\Resources\QuarantineReceipts\QuarantineReceiptResource;
-use Filament\Resources\Pages\ListRecords;
 
-class ListQuarantineReceipts extends ListRecords
+class ListQuarantineReceipts extends InventoryListRecords
 {
+    protected string $inventoryKind = 'quarantine';
+
+    public function getSubheading(): ?string
+    {
+        return __('Returned stock held separately. Inspection observations do not release stock.');
+    }
+
     protected static string $resource = QuarantineReceiptResource::class;
 
     protected function getHeaderActions(): array

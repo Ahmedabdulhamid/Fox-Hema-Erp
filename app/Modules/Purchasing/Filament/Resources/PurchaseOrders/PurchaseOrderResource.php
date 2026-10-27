@@ -44,7 +44,7 @@ class PurchaseOrderResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return app(PurchasingAccess::class)->scopeOrders(parent::getEloquentQuery(), auth()->user())->with(['items.variant.images', 'items.variant.product.images', 'supplier', 'location']);
+        return app(PurchasingAccess::class)->scopeOrders(parent::getEloquentQuery(), auth()->user())->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'location']);
     }
 
     public static function form(Schema $schema): Schema

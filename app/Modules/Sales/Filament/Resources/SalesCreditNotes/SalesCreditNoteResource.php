@@ -2,6 +2,11 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesCreditNotes;
 
+use App\Modules\Payments\Filament\CustomerSettlementActions;
+use App\Modules\Payments\Models\PaymentRefund;
+use App\Modules\Payments\Services\CustomerRefunds;
+use App\Modules\Payments\Services\PaymentsPermissions;
+use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Sales\Filament\Resources\SalesInvoices\SalesInvoiceResource;
 use App\Modules\Sales\Filament\Resources\SalesReturns\SalesReturnResource;
 use App\Modules\Sales\Filament\SalesCreditNoteActions;
@@ -10,9 +15,11 @@ use App\Modules\Sales\Services\SalesCreditNoteService;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\RepeatableEntry;
+use Filament\Infolists\Components\RepeatableEntry\TableColumn;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -46,7 +53,7 @@ class SalesCreditNoteResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return app(SalesCreditNoteService::class)->scope(parent::getEloquentQuery(), auth()->user())->with(['salesInvoice', 'salesReturn', 'location', 'createdBy', 'postedBy', 'items.salesInvoiceItem.variant.images', 'items.salesInvoiceItem.variant.product.images']);
+        return app(SalesCreditNoteService::class)->scope(parent::getEloquentQuery(), auth()->user())->with(['salesInvoice', 'salesReturn', 'location', 'createdBy', 'postedBy', 'items.salesInvoiceItem.variant.images', 'items.salesInvoiceItem.variant.color', 'items.salesInvoiceItem.variant.size', 'items.salesInvoiceItem.variant.product.brand', 'items.salesInvoiceItem.variant.product.images']);
     }
 
     public static function form(Schema $schema): Schema
@@ -71,15 +78,30 @@ class SalesCreditNoteResource extends Resource
                 TextEntry::make('posted_at')->label(__('invoices.posted_at'))->dateTime(),
             ])->columnSpanFull(),
             Section::make(__('credits.returned_products'))->schema([
-                RepeatableEntry::make('items')->label(__('invoices.items'))->schema([
-                    TextEntry::make('commercial_snapshot.description')->label(__('invoices.product'))->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->salesInvoiceItem?->variant, 'title' => $state]))->columnSpanFull(),
-                    TextEntry::make('quantity')->label(__('invoices.quantity')),
-                    TextEntry::make('unit_price')->label(__('invoices.unit_price')),
-                    TextEntry::make('subtotal')->label(__('invoices.subtotal')),
-                    TextEntry::make('discount_amount')->label(__('invoices.discount')),
-                    TextEntry::make('tax_amount')->label(__('invoices.tax')),
-                    TextEntry::make('line_total')->label(__('invoices.total')),
-                ])->columns(4)->columnSpanFull(),
+                RepeatableEntry::make('items')->label(__('invoices.items'))->columnSpanFull()->extraAttributes(['class' => 'fox-master-detail-table'])
+                    ->table(array_map(fn (string $label): TableColumn => TableColumn::make(__($label))->wrapHeader(), ['Product', 'Variant', 'Quantity', 'Unit price', 'Line total', 'View Details']))->schema([
+                        TextEntry::make('commercial_snapshot.description')->label(__('invoices.product'))->formatStateUsing(fn ($state, $record) => view('components.product-line-identity', ['variant' => $record->salesInvoiceItem?->variant, 'title' => $state])),
+                        View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record->salesInvoiceItem?->variant]),
+                        TextEntry::make('quantity')->label(__('invoices.quantity')),
+                        TextEntry::make('unit_price')->label(__('invoices.unit_price')),
+                        TextEntry::make('line_total')->label(__('invoices.total')),
+                        MasterDetail::entry(fn (): array => [
+                            Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
+                                TextEntry::make('commercial_snapshot.description')->label(__('invoices.product'))->columnSpanFull(),
+                                TextEntry::make('commercial_snapshot.invoice.sku')->label(__('SKU')),
+                                TextEntry::make('commercial_snapshot.invoice.size')->label(__('Size')),
+                                TextEntry::make('commercial_snapshot.invoice.color')->label(__('Color')),
+                            ]),
+                            Section::make(__('Financial totals'))->columns(['default' => 1, 'sm' => 2])->schema([
+                                TextEntry::make('quantity')->label(__('invoices.quantity')),
+                                TextEntry::make('unit_price')->label(__('invoices.unit_price')),
+                                TextEntry::make('subtotal')->label(__('invoices.subtotal')),
+                                TextEntry::make('discount_amount')->label(__('invoices.discount')),
+                                TextEntry::make('tax_amount')->label(__('invoices.tax')),
+                                TextEntry::make('line_total')->label(__('invoices.total')),
+                            ]),
+                        ]),
+                    ]),
             ])->columnSpanFull(),
             Section::make(__('credits.preview'))->columns(['default' => 1, 'lg' => 4])->schema([
                 TextEntry::make('subtotal')->label(__('invoices.subtotal')),
@@ -89,6 +111,22 @@ class SalesCreditNoteResource extends Resource
             ])->columnSpanFull(),
             TextEntry::make('reason')->label(__('credits.reason'))->columnSpanFull(),
             TextEntry::make('refund_notice')->state(__('credits.refund_notice'))->columnSpanFull(),
+            TextEntry::make('refunded_amount')->label(__('payments.refunded_amount'))
+                ->visible(fn ($record) => CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id))
+                ->state(fn ($record) => app(CustomerRefunds::class)->creditBalance(auth()->user(), $record)['refunded']),
+            RepeatableEntry::make('refunds')->label(__('payments.fields.refunds'))
+                ->visible(fn ($record) => CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id))
+                ->state(fn ($record) => PaymentRefund::where('sales_credit_note_id', $record->id)->with('payment.paymentMethod')->get())
+                ->schema([
+                    TextEntry::make('refund_number')->label(__('payments.fields.refund_number')),
+                    TextEntry::make('payment.payment_number')->label(__('payments.original_receipt')),
+                    TextEntry::make('payment.paymentMethod.name')->label(__('payments.fields.payment_method_id')),
+                    TextEntry::make('amount')->label(__('payments.fields.amount')),
+                    TextEntry::make('status')->label(__('payments.fields.status'))->formatStateUsing(fn (string $state): string => __('payments.status.'.$state)),
+                    TextEntry::make('posted_at')->label(__('payments.fields.posted_at'))->dateTime(),
+                    TextEntry::make('recovered_at')->label(__('payments.fields.recovered_at'))->dateTime(),
+                    TextEntry::make('external_reference')->label(__('payments.fields.external_reference')),
+                ])->columnSpanFull(),
         ])->columns(3);
     }
 

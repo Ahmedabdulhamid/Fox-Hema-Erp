@@ -7,10 +7,12 @@ use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\Permission;
 use App\Modules\AccessManagement\Models\Role;
 use App\Modules\Inventory\Services\InventoryPermissions;
+use App\Modules\Payments\Services\PaymentsPermissions;
 use App\Modules\Products\Services\ProductPermissions;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Sales\Services\SalesPermissions;
 use App\Modules\Taxes\Services\DefinitionPermissions;
+use App\Modules\Treasury\Services\TreasuryPermissions;
 use Illuminate\Support\Facades\DB;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -20,7 +22,7 @@ class ModuleRegistry
         'access_management' => 'AccessManagement', 'products' => 'Products',
         'inventory' => 'Inventory', 'inventory_costing' => 'Inventory Costing',
         'purchasing' => 'Purchasing', 'taxes' => 'Taxes', 'discounts' => 'Discounts',
-        'sales' => 'Sales', 'pos' => 'POS', 'stock_transfers' => 'Stock Transfers', 'payments' => 'Payments',
+        'sales' => 'Sales', 'pos' => 'POS', 'stock_transfers' => 'Stock Transfers', 'payments' => 'Payments', 'treasury' => 'Treasury',
     ];
 
     public function register(): void
@@ -94,6 +96,12 @@ class ModuleRegistry
         }
         if (isset($modules['purchasing'])) {
             $permissions = [...$permissions, ...PurchasingPermissions::all()];
+        }
+        if (isset($modules['payments'])) {
+            $permissions = [...$permissions, ...PaymentsPermissions::all()];
+        }
+        if (isset($modules['treasury'])) {
+            $permissions = [...$permissions, ...TreasuryPermissions::all()];
         }
         foreach (DefinitionPermissions::all() as $permission) {
             if (isset($modules[str($permission)->before('.')->toString()])) {

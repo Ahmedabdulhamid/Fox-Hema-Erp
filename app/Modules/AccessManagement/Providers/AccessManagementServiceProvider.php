@@ -22,10 +22,15 @@ use App\Modules\AccessManagement\Policies\RolePolicy;
 use App\Modules\AccessManagement\Policies\UserPolicy;
 use App\Modules\AccessManagement\Services\AuditLogger;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
 use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\Events\TransactionBeginning;
+use Illuminate\Database\Events\TransactionCommitted;
+use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -43,6 +48,14 @@ class AccessManagementServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        DB::listen(static function (QueryExecuted $query): void {
+            if (! preg_match('/^\s*(SELECT|SHOW|EXPLAIN|DESCRIBE|DESC|PRAGMA)\b/i', $query->sql)) {
+                RequestAuthorizationFacts::forget();
+            }
+        });
+        Event::listen([TransactionBeginning::class, TransactionCommitted::class, TransactionRolledBack::class], static function (): void {
+            RequestAuthorizationFacts::forget();
+        });
         $this->commands([ProvisionSuperAdmin::class]);
         Gate::policy(Module::class, ModulePolicy::class);
         Gate::policy(Permission::class, PermissionPolicy::class);

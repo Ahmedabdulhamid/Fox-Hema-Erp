@@ -43,9 +43,8 @@ class PurchaseReceiptResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(PurchasingAccess::class)->scopeReceipts(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.purchaseOrderItem.variant.images', 'items.purchaseOrderItem.variant.product.images', 'purchaseOrder.supplier', 'location', 'items.purchaseOrderItem.variant.product',
-                'items.purchaseOrderItem.variant.color', 'items.purchaseOrderItem.variant.size',
-                'items.stockMovement.inventoryCostEntry']);
+            ->with(['items.purchaseOrderItem.variant.images', 'items.purchaseOrderItem.variant.product.brand', 'items.purchaseOrderItem.variant.product.images', 'purchaseOrder.supplier', 'location', 'items.purchaseOrderItem.variant.product',
+                'items.purchaseOrderItem.variant.color', 'items.purchaseOrderItem.variant.size']);
     }
 
     public static function form(Schema $schema): Schema

@@ -30,6 +30,8 @@ class VendorBill extends Model
         'bill_number',
         'bill_date',
         'due_date',
+        'settlement_terms',
+        'planned_immediate_amount',
         'status',
         'subtotal',
         'discount_amount',
@@ -50,6 +52,7 @@ class VendorBill extends Model
     {
         return [
             'discount_amount' => 'decimal:4',
+            'planned_immediate_amount' => 'decimal:4',
             'posted_at' => 'datetime',
             'bill_date' => 'date',
             'due_date' => 'date',

@@ -40,7 +40,7 @@ class SalesReturnResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(SalesAccess::class)->scopeReturns(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.variant.images', 'items.variant.product.images', 'location', 'salesOrder', 'createdBy', 'approvedBy', 'cancelledBy', 'items.invoiceAllocations']);
+            ->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'location', 'salesOrder', 'createdBy', 'approvedBy', 'cancelledBy']);
     }
 
     public static function form(Schema $schema): Schema

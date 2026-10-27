@@ -4,6 +4,18 @@ namespace App\Modules\Purchasing\Services;
 
 class PurchasingPermissions
 {
+    public const PAYMENTS_VIEW = 'purchasing.vendor_payments.view';
+
+    public const PAYMENTS_CREATE = 'purchasing.vendor_payments.create';
+
+    public const PAYMENTS_POST = 'purchasing.vendor_payments.post';
+
+    public const PAYMENTS_ALLOCATE = 'purchasing.vendor_payments.allocate';
+
+    public const PAYMENTS_REVERSE = 'purchasing.vendor_payments.reverse';
+
+    public const PAYMENTS_VIEW_ALL_LOCATIONS = 'purchasing.vendor_payments.view_all_locations';
+
     public const VIEW = 'purchasing.suppliers.view';
 
     public const CREATE = 'purchasing.suppliers.create';
@@ -48,6 +60,8 @@ class PurchasingPermissions
         return [self::VIEW, self::CREATE, self::UPDATE, self::DEACTIVATE,
             self::ORDERS_VIEW, self::ORDERS_CREATE, self::ORDERS_UPDATE, self::ORDERS_CONFIRM, self::ORDERS_CANCEL,
             self::RECEIPTS_VIEW, self::RECEIPTS_CREATE, self::RECEIPTS_UPDATE, self::RECEIPTS_POST, self::RECEIPTS_CANCEL,
-            self::BILLS_VIEW, self::BILLS_CREATE, self::BILLS_UPDATE, self::BILLS_POST, self::BILLS_CANCEL];
+            self::BILLS_VIEW, self::BILLS_CREATE, self::BILLS_UPDATE, self::BILLS_POST, self::BILLS_CANCEL,
+            self::PAYMENTS_VIEW, self::PAYMENTS_CREATE, self::PAYMENTS_POST, self::PAYMENTS_ALLOCATE,
+            self::PAYMENTS_REVERSE, self::PAYMENTS_VIEW_ALL_LOCATIONS];
     }
 }

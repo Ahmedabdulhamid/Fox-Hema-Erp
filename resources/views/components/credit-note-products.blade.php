@@ -12,11 +12,11 @@
             <tbody>
                 @foreach ($rows as $row)
                     <tr>
-                        <td>@include('components.product-line-identity', ['variant' => $invoiceItems->get($row['invoice_item_id'])?->variant, 'title' => $row['description']])</td>
-                        <td><bdi>{{ $row['invoice_quantity'] }}</bdi></td>
-                        <td><bdi>{{ $row['quantity'] }}</bdi></td>
-                        <td><bdi>{{ $row['remaining'] }}</bdi></td>
-                        <td><bdi>{{ $row['remaining_amount'] }}</bdi></td>
+                        <td>@include('components.product-line-identity', ['variant' => $invoiceItems->get($row['invoice_item_id'])?->variant, 'title' => $row['description']])<x-inventory-variant :variant="$invoiceItems->get($row['invoice_item_id'])?->variant" /></td>
+                        <td><bdi>{{ \App\Models\NumericFormatter::format($row['invoice_quantity'], 'quantity') }}</bdi></td>
+                        <td><bdi>{{ \App\Models\NumericFormatter::format($row['quantity'], 'quantity') }}</bdi></td>
+                        <td><bdi>{{ \App\Models\NumericFormatter::format($row['remaining'], 'quantity') }}</bdi></td>
+                        <td><bdi>{{ \App\Models\NumericFormatter::format($row['remaining_amount'], 'money') }}</bdi></td>
                     </tr>
                 @endforeach
             </tbody>

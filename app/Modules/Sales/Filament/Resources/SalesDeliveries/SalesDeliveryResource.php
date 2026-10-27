@@ -44,7 +44,7 @@ class SalesDeliveryResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(SalesAccess::class)->scopeDeliveries(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.salesOrderItem.variant.images', 'items.salesOrderItem.variant.product.images', 'location', 'salesOrder', 'createdBy', 'items.salesOrderItem.variant.product', 'items.salesOrderItem.variant.size', 'items.salesOrderItem.variant.color']);
+            ->with(['items.salesOrderItem.variant.images', 'items.salesOrderItem.variant.product.brand', 'items.salesOrderItem.variant.product.images', 'location', 'salesOrder', 'createdBy', 'items.salesOrderItem.variant.product', 'items.salesOrderItem.variant.size', 'items.salesOrderItem.variant.color']);
     }
 
     public static function form(Schema $schema): Schema

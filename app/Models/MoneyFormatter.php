@@ -7,16 +7,36 @@ use Brick\Math\RoundingMode;
 
 class MoneyFormatter
 {
-    /** Presentation rounding only; never pass this result to a calculation or input. */
-    public static function format(?string $value): string
+    /** Presentation only; never pass formatted values to calculations or inputs. */
+    public static function format(?string $value, string $currency = 'EGP'): string
     {
-        if ($value === null) {
-            return '—';
-        }
-        $decimal = (string) BigDecimal::of($value)->toScale(2, RoundingMode::HalfUp);
-        [$integer, $fraction] = explode('.', $decimal);
-        $integer = preg_replace('/\B(?=(\d{3})+(?!\d))/', ',', $integer);
+        return $value === null || $value === '' ? "\u{2014}" : $currency.' '.self::amount($value);
+    }
 
-        return 'EGP '.$integer.'.'.$fraction;
+    public static function amount(?string $value): string
+    {
+        if ($value === null || $value === '') {
+            return "\u{2014}";
+        }
+
+        return self::group((string) BigDecimal::of($value)->toScale(2, RoundingMode::HalfUp));
+    }
+
+    /** Unit prices and valuation costs retain financially significant sub-cent precision. */
+    public static function precise(?string $value, string $currency = 'EGP'): string
+    {
+        if ($value === null || $value === '') {
+            return "\u{2014}";
+        }
+        $decimal = BigDecimal::of($value)->strippedOfTrailingZeros();
+
+        return $currency.' '.self::group((string) $decimal->toScale(max(2, $decimal->getScale())));
+    }
+
+    private static function group(string $decimal): string
+    {
+        [$integer, $fraction] = explode('.', $decimal);
+
+        return preg_replace('/\B(?=(\d{3})+(?!\d))/', ',', $integer).'.'.$fraction;
     }
 }

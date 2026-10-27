@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesInvoices\Tables;
 
+use App\Models\MoneyFormatter;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\Sales\Filament\SalesInvoiceActions;
 use Filament\Actions\EditAction;
@@ -27,7 +28,7 @@ class SalesInvoicesTable
                     'posted' => 'success', 'cancelled' => 'danger', default => 'warning'
                 }),
             TextColumn::make('invoice_date')->label(__('invoices.issue_date'))->date()->sortable(),
-            TextColumn::make('total_amount')->label(__('invoices.grand_total'))->money(fn ($record): string => $record->currency),
+            TextColumn::make('total_amount')->label(__('invoices.grand_total'))->formatStateUsing(fn ($state, $record): string => MoneyFormatter::format($state, $record->currency)),
             TextColumn::make('postedBy.name')->label(__('invoices.posted_by'))->toggleable(),
         ])->filters([
             SelectFilter::make('status')->label(__('invoices.status'))->options(['draft' => __('invoices.draft'), 'posted' => __('invoices.posted'), 'cancelled' => __('invoices.cancelled')]),
@@ -39,7 +40,7 @@ class SalesInvoicesTable
             ])->query(fn (Builder $query, array $data): Builder => $query
                 ->when($data['from'] ?? null, fn ($query, $date) => $query->whereDate('invoice_date', '>=', $date))
                 ->when($data['until'] ?? null, fn ($query, $date) => $query->whereDate('invoice_date', '<=', $date))),
-        ])->recordActions([ViewAction::make(), EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
+        ])->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
             SalesInvoiceActions::download('ar'), SalesInvoiceActions::download('en')])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }

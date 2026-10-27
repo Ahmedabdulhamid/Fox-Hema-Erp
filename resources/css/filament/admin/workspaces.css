@@ -213,10 +213,6 @@ html[dir='rtl'] .fox-public-arrow { transform: scaleX(-1); }
 .fox-language-switcher button { cursor: pointer; font-size: .8rem; }
 .fox-language-switcher button[aria-current='true'] { color: var(--fox-primary-dark); font-weight: 700; }
 .fox-language-separator { color: var(--fox-border); }
-.fox-location-switcher { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-width: 0; font-size: .8rem; }
-.fox-location-switcher label { color: var(--fox-muted); font-size: .75rem; }
-.fox-location-switcher select { max-width: 12rem; padding: .5rem .65rem; color: var(--fox-ink); }
-.fox-location-switcher [role='alert'] { color: var(--fox-danger); }
 .fox-product-gallery .fi-in-image { display: flex; flex-wrap: wrap; gap: .7rem; }
 .fox-product-gallery .fi-in-image img { object-fit: contain; background: var(--fox-canvas); border: 1px solid var(--fox-border); border-radius: .65rem; }
 .fox-record-section .fi-in-entry { border-block-end: 1px solid var(--fox-border); padding-block-end: .75rem; }
@@ -226,8 +222,7 @@ html[dir='rtl'] .fox-permission-chevron { transform: scaleX(-1); }
  .fox-permission-pane { min-height: auto; }
  .fox-profile-hero { grid-template-columns: auto 1fr; }
  .fox-profile-role { grid-column: 1 / -1; }
- .fox-location-switcher label, .fox-topbar-identity { display: none; }
- .fox-location-switcher select { max-width: 8rem; }
+ .fox-topbar-identity { display: none; }
  .fox-language-switcher { gap: .3rem; padding: .35rem; }
 }
 

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Products\Filament\Resources\Products\Tables;
 
+use App\Models\MoneyFormatter;
 use App\Modules\Products\Filament\ProductMutation;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Services\ProductCatalogManager;
@@ -37,13 +38,13 @@ class ProductsTable
                     $query->where('name', 'like', '%'.$search.'%')->orWhere('default_sku', 'like', '%'.$search.'%')->orWhereHas('variants', fn (Builder $variants): Builder => $variants->where('sku', 'like', '%'.$search.'%')->orWhere('barcode', 'like', '%'.$search.'%'));
                 });
             })->sortable(),
-            IconColumn::make('is_active')->label(__('Active'))->boolean(),
+            IconColumn::make('is_active')->toggleable(isToggledHiddenByDefault: true)->label(__('Active'))->boolean(),
             TextColumn::make('default_sku')->label(__('Catalog SKU')),
-            TextColumn::make('brand.name')->label(__('Brand')),
-            TextColumn::make('category.name')->label(__('Category')),
-            TextColumn::make('variants_min_sale_price')->label(__('Sale price from'))->state(fn ($record) => $record->has_fixed_selling_price ? $record->sale_price : $record->variants_min_sale_price)->numeric(decimalPlaces: 4)->placeholder(__('No variants')),
-            TextColumn::make('variants_max_sale_price')->label(__('Sale price to'))->state(fn ($record) => $record->has_fixed_selling_price ? $record->sale_price : $record->variants_max_sale_price)->numeric(decimalPlaces: 4)->toggleable(isToggledHiddenByDefault: true),
-            TextColumn::make('variants_min_cost_price')->label(__('Reference cost from'))->numeric(decimalPlaces: 4)->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())),
+            TextColumn::make('brand.name')->toggleable(isToggledHiddenByDefault: true)->label(__('Brand')),
+            TextColumn::make('category.name')->toggleable(isToggledHiddenByDefault: true)->label(__('Category')),
+            TextColumn::make('variants_min_sale_price')->label(__('Sale price from'))->state(fn ($record) => $record->has_fixed_selling_price ? $record->sale_price : $record->variants_min_sale_price)->formatStateUsing(fn ($state): string => MoneyFormatter::precise($state))->placeholder(__('No variants')),
+            TextColumn::make('variants_max_sale_price')->label(__('Sale price to'))->state(fn ($record) => $record->has_fixed_selling_price ? $record->sale_price : $record->variants_max_sale_price)->formatStateUsing(fn ($state): string => MoneyFormatter::precise($state))->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('variants_min_cost_price')->toggleable(isToggledHiddenByDefault: true)->label(__('Reference cost from'))->formatStateUsing(fn ($state): string => MoneyFormatter::precise($state))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())),
             TextColumn::make('status')->label(__('Status'))->formatStateUsing(fn ($state): string => __(ucfirst($state->value)))->badge()->color(fn ($state): string => match ($state->value) {
                 'active' => 'success', 'draft' => 'warning', default => 'gray'
             }),
@@ -51,7 +52,7 @@ class ProductsTable
                 SelectFilter::make('status')->label(__('Status'))->options(['draft' => __('Draft'), 'active' => __('Active'), 'archived' => __('Archived')]),
                 SelectFilter::make('brand')->label(__('Brand'))->relationship('brand', 'name')->searchable()->preload(),
                 SelectFilter::make('category')->label(__('Category'))->relationship('category', 'name')->searchable()->preload(),
-                Filter::make('missing_variants')->label(__('Missing variants'))->query(fn (Builder $query): Builder => $query->doesntHave('variants'))])->defaultSort('name')->recordActions([
+                Filter::make('missing_variants')->label(__('Missing variants'))->query(fn (Builder $query): Builder => $query->doesntHave('variants'))])->defaultSort('name')->recordAction(null)->recordActions([
                     ViewAction::make(), EditAction::make(), DeleteAction::make()->using(fn (Model $record): bool => ProductMutation::run(fn () => app(ProductCatalogManager::class)->delete(auth()->user(), $record))),
                 ]);
     }

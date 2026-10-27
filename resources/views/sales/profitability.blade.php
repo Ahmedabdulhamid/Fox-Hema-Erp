@@ -36,7 +36,7 @@
                         <tr wire:key="profit-{{ $group }}-{{ $row->id }}">
                             <td class="p-3">{{ $row->label }}</td>
                             @foreach (['revenue', 'cost', 'profit'] as $field)<td class="p-3 tabular-nums">{{ $amounts[$field] === null ? __('N/A') : \App\Models\MoneyFormatter::format($amounts[$field]) }}</td>@endforeach
-                            <td class="p-3 tabular-nums">{{ $amounts['margin'] === null ? __('N/A') : $amounts['margin'].'%' }}</td>
+                            <td class="p-3 tabular-nums">{{ $amounts['margin'] === null ? __('N/A') : \App\Models\PercentageFormatter::format($amounts['margin']) }}</td>
                         </tr>
                     @empty
                         <tr><td class="p-3" colspan="5">{{ __('No posted sales in this period.') }}</td></tr>
