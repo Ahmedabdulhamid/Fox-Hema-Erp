@@ -6,11 +6,21 @@ use App\Modules\AccessManagement\Database\Seeders\AccessManagementSeeder;
 use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\Permission;
 use App\Modules\AccessManagement\Models\Role;
+use App\Modules\BackupRestore\Services\BackupPermissions;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Payments\Services\PaymentsPermissions;
+use App\Modules\POS\Services\PosPermissions;
 use App\Modules\Products\Services\ProductPermissions;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
+use App\Modules\Reporting\Services\InventoryReportingAccess;
+use App\Modules\Reporting\Services\PosReportingAccess;
+use App\Modules\Reporting\Services\ProfitabilityAccess;
+use App\Modules\Reporting\Services\PurchasingReportingAccess;
+use App\Modules\Reporting\Services\ReportingAccess;
+use App\Modules\Reporting\Services\StockTransferReportingAccess;
+use App\Modules\Reporting\Services\TreasuryReportingAccess;
 use App\Modules\Sales\Services\SalesPermissions;
+use App\Modules\StockTransfer\Services\StockTransferPermissions;
 use App\Modules\Taxes\Services\DefinitionPermissions;
 use App\Modules\Treasury\Services\TreasuryPermissions;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +33,7 @@ class ModuleRegistry
         'inventory' => 'Inventory', 'inventory_costing' => 'Inventory Costing',
         'purchasing' => 'Purchasing', 'taxes' => 'Taxes', 'discounts' => 'Discounts',
         'sales' => 'Sales', 'pos' => 'POS', 'stock_transfers' => 'Stock Transfers', 'payments' => 'Payments', 'treasury' => 'Treasury',
+        'reporting' => 'Reporting', 'backup_restore' => 'Backup & Restore',
     ];
 
     public function register(): void
@@ -42,14 +53,17 @@ class ModuleRegistry
                             'taxes' => 'Tax definitions and product tax assignments.',
                             'discounts' => 'Discount definitions and product discount assignments.',
                             'inventory' => 'Read-only stock balances and movements with atomic inventory posting.',
-                            'inventory_costing' => 'Category settings and receipt-side FIFO, AVCO and Standard Price valuation. Issue valuation is not implemented.',
+                            'inventory_costing' => 'Category settings and FIFO, AVCO and Standard Price inventory valuation.',
+                            'stock_transfers' => 'Location-scoped stock transfer requests, dispatches, receipts and costing.',
                             'purchasing' => 'Suppliers, purchase orders, goods receipts and receipt-matched vendor bills.',
                             'sales' => 'Branch-scoped sales orders with atomic confirmation, reservations and cancellation.',
+                            'reporting' => 'Branch-scoped sales reports with recoverable daily projections.',
+                            'backup_restore' => 'Global backup settings and read-only history; execution engines are not installed.',
                             default => 'Planned: database design exists; business pages and operations are not implemented.',
                         },
                         'icon' => 'heroicon-o-squares-2x2',
                         'sort_order' => (array_search($code, array_keys(self::MODULES), true) ?: 0) * 10,
-                        'is_active' => $code === 'access_management',
+                        'is_active' => in_array($code, ['access_management', 'stock_transfers'], true),
                     ]);
                 }
                 ModuleRegistryLock::acquire();
@@ -65,7 +79,7 @@ class ModuleRegistry
                             ], true);
                         }
 
-                        return str_starts_with($permission->name, $module->code.'.');
+                        return str_starts_with($permission->name, ($module->code === 'backup_restore' ? 'backups' : $module->code).'.');
                     })->pluck('id');
                     $module->permissions()->syncWithoutDetaching($ids);
                 }
@@ -85,8 +99,20 @@ class ModuleRegistry
     {
         $modules = app(ModuleDiscovery::class)->modules();
         $permissions = [];
+        if (isset($modules['backup_restore'])) {
+            $permissions = BackupPermissions::all();
+        }
+        if (isset($modules['reporting'])) {
+            $permissions[] = ReportingAccess::VIEW;
+            $permissions[] = ProfitabilityAccess::VIEW;
+            $permissions[] = InventoryReportingAccess::VIEW;
+            $permissions[] = TreasuryReportingAccess::VIEW;
+            $permissions[] = PosReportingAccess::VIEW;
+            $permissions[] = PurchasingReportingAccess::VIEW;
+            $permissions[] = StockTransferReportingAccess::VIEW;
+        }
         if (isset($modules['access_management'])) {
-            $permissions = AccessManagementSeeder::PERMISSIONS;
+            $permissions = [...$permissions, ...AccessManagementSeeder::PERMISSIONS];
         }
         if (isset($modules['products'])) {
             $permissions = [...$permissions, ...ProductPermissions::all()];
@@ -109,8 +135,16 @@ class ModuleRegistry
             }
         }
 
+        if (isset($modules['pos'])) {
+            $permissions = [...$permissions, ...PosPermissions::all()];
+        }
+
         if (isset($modules['sales'])) {
             $permissions = [...$permissions, ...SalesPermissions::all()];
+        }
+
+        if (isset($modules['stock_transfers'])) {
+            $permissions = [...$permissions, ...StockTransferPermissions::all()];
         }
 
         return array_values(array_unique($permissions));

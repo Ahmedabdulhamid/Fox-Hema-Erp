@@ -22,33 +22,31 @@ class SalesAccess
             $requiresActiveLocation = ! in_array($permission, [SalesPermissions::VIEW, SalesPermissions::DELIVERIES_VIEW,
                 SalesPermissions::INVOICES_VIEW, SalesPermissions::RETURNS_VIEW, SalesPermissions::CREDITS_VIEW,
                 SalesPermissions::INVOICES_DOWNLOAD, SalesPermissions::CREDITS_DOWNLOAD], true);
-            $hasValidBranch = RequestAuthorizationFacts::remember(
-                'sales-branch:'.json_encode([$locationId, $requiresActiveLocation], JSON_THROW_ON_ERROR),
-                function () use ($locationId, $requiresActiveLocation): bool {
-                    $location = Location::whereKey($locationId)->where('type', 'branch');
-                    if ($requiresActiveLocation) {
-                        $location->where('is_active', true);
-                    }
-
-                    return $location->exists();
-                },
-            );
-            abort_unless($hasValidBranch, 403);
+            abort_unless($this->isBranch($locationId, $requiresActiveLocation), 403);
         }
         if (! $actor->isGlobalSuperAdmin()) {
             $scope = getPermissionsTeamId();
-            $isAssignedToBranch = $scope !== null && RequestAuthorizationFacts::remember(
-                'sales-actor-branch:'.json_encode([$actor->getMorphClass(), $actor->getKey(), $scope], JSON_THROW_ON_ERROR),
-                fn (): bool => $actor->locations()->whereKey($scope)->exists(),
-            );
-            $hasActiveScope = $scope !== null && RequestAuthorizationFacts::remember(
-                'sales-active-scope-branch:'.$scope,
-                fn (): bool => Location::whereKey($scope)->where('type', 'branch')->where('is_active', true)->exists(),
-            );
+            $isAssignedToBranch = $scope !== null && RequestAuthorizationFacts::actorHasLocation($actor, (int) $scope);
+            $hasActiveScope = $scope !== null && $this->isBranch((int) $scope, true);
             abort_unless($scope !== null && ($locationId === null || (int) $scope === $locationId)
                 && $hasActiveScope
                 && $isAssignedToBranch, 403);
         }
+    }
+
+    private function isBranch(int $locationId, bool $requireActive): bool
+    {
+        return RequestAuthorizationFacts::remember(
+            'sales-branch:'.json_encode([$locationId, $requireActive], JSON_THROW_ON_ERROR),
+            function () use ($locationId, $requireActive): bool {
+                $location = Location::whereKey($locationId)->where('type', 'branch');
+                if ($requireActive) {
+                    $location->where('is_active', true);
+                }
+
+                return $location->exists();
+            },
+        );
     }
 
     public function allows(?User $actor, string $permission, ?int $locationId = null): bool

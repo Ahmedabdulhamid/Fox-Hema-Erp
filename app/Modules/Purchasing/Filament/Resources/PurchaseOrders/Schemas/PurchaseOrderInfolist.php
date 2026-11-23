@@ -2,12 +2,13 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Models\QuantityFormatter;
 use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\PurchaseReceiptResource;
 use App\Modules\Purchasing\Models\PurchaseOrder;
-use App\Modules\Purchasing\Services\PurchaseReceiptService;
 use App\Modules\Purchasing\Services\PurchasingAccess;
+use App\Modules\Purchasing\Services\PurchasingDisplay;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\RepeatableEntry\TableColumn;
@@ -50,16 +51,23 @@ class PurchaseOrderInfolist
             Section::make(__('Goods Receipts'))->columns(4)
                 ->visible(fn (PurchaseOrder $record): bool => app(PurchasingAccess::class)->allows(auth()->user(), PurchasingPermissions::RECEIPTS_VIEW, (int) $record->location_id))
                 ->schema([
-                    TextEntry::make('ordered_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity'))->state(fn (PurchaseOrder $record): string => app(PurchaseReceiptService::class)->summary($record)['ordered']),
-                    TextEntry::make('received_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Posted received quantity'))->state(fn (PurchaseOrder $record): string => app(PurchaseReceiptService::class)->summary($record)['received']),
-                    TextEntry::make('remaining_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Remaining quantity'))->state(fn (PurchaseOrder $record): string => app(PurchaseReceiptService::class)->summary($record)['remaining']),
-                    TextEntry::make('receipt_count')->label(__('Receipt count'))->state(fn (PurchaseOrder $record): int => app(PurchaseReceiptService::class)->summary($record)['receipt_count']),
+                    TextEntry::make('ordered_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity'))->state(fn (PurchaseOrder $record): string => self::receiptSummary($record)['ordered']),
+                    TextEntry::make('received_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Posted received quantity'))->state(fn (PurchaseOrder $record): string => self::receiptSummary($record)['received']),
+                    TextEntry::make('remaining_qty')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Remaining quantity'))->state(fn (PurchaseOrder $record): string => self::receiptSummary($record)['remaining']),
+                    TextEntry::make('receipt_count')->label(__('Receipt count'))->state(fn (PurchaseOrder $record): int => self::receiptSummary($record)['receipt_count']),
                     RepeatableEntry::make('receipts')->label(__('Goods Receipts'))->columnSpanFull()->columns(2)->schema([
                         TextEntry::make('receipt_number')->label(__('Receipt number'))->url(fn ($record): string => PurchaseReceiptResource::getUrl('view', ['record' => $record])),
                         TextEntry::make('status')->label(__('Status'))->badge()->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
                     ]),
                 ]),
         ])->columns(1);
+    }
+
+    /** @return array{ordered: string, received: string, remaining: string, receipt_count: int} */
+    private static function receiptSummary(PurchaseOrder $order): array
+    {
+        return RequestDisplayData::remember('purchase-order.receipt-summary.'.$order->id,
+            fn (): array => app(PurchasingDisplay::class)->receiptSummary(auth()->user(), $order));
     }
 
     private static function lineDetails(): array

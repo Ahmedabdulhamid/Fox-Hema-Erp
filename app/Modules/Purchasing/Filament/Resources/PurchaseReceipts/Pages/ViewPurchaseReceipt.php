@@ -9,11 +9,17 @@ use App\Modules\Purchasing\Models\VendorBill;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Gate;
 
 class ViewPurchaseReceipt extends ViewRecord
 {
     protected static string $resource = PurchaseReceiptResource::class;
+
+    protected function resolveRecord(int|string $key): Model
+    {
+        return parent::resolveRecord($key)->loadMissing('items.stockMovement.inventoryCostEntry');
+    }
 
     protected function getHeaderActions(): array
     {

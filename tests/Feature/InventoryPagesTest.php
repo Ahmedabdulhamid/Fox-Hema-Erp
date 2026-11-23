@@ -43,11 +43,11 @@ class InventoryPagesTest extends TestCase
     {
         $movement = $this->postStock('3', 'receive');
         [$foreign, $balance, $foreignMovement] = $this->foreignStock();
-        Livewire::test(ListStockBalances::class)->assertSuccessful()
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->assertSuccessful()
             ->assertCanSeeTableRecords([$this->balance()])->assertCanNotSeeTableRecords([$balance])
             ->assertTableActionDoesNotExist('edit')->assertTableActionDoesNotExist('delete')
             ->assertTableBulkActionDoesNotExist('delete');
-        Livewire::test(ListStockMovements::class)->assertSuccessful()
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->assertSuccessful()
             ->assertCanSeeTableRecords([$movement])->assertCanNotSeeTableRecords([$foreignMovement])
             ->assertTableActionDoesNotExist('edit')->assertTableActionDoesNotExist('delete');
         $this->assertSame(['index'], array_keys(StockBalanceResource::getPages()));
@@ -59,8 +59,8 @@ class InventoryPagesTest extends TestCase
         $this->assertFalse(Gate::allows('view', $balance));
         $this->assertFalse(Gate::allows('view', $foreignMovement));
         $this->assertSame([$this->location->id], app(InventoryAccess::class)->locations($this->actor, InventoryPermissions::BALANCES)->pluck('id')->all());
-        Livewire::test(ListStockBalances::class)->filterTable('location_id', $foreign->id)->assertCountTableRecords(0);
-        Livewire::test(ListStockMovements::class)->filterTable('location_id', $foreign->id)->assertCountTableRecords(0);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->filterTable('location_id', $foreign->id)->assertCountTableRecords(0);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->filterTable('location_id', $foreign->id)->assertCountTableRecords(0);
     }
 
     public function test_search_and_product_location_type_date_filters(): void
@@ -70,15 +70,15 @@ class InventoryPagesTest extends TestCase
         $second = $this->postStock('-1', 'sale', StockMovementType::Sale);
         $balance = $this->balance();
         foreach (['Distinct inventory product', $this->variant->sku, $this->variant->barcode] as $search) {
-            Livewire::test(ListStockBalances::class)->searchTable($search)->assertCanSeeTableRecords([$balance]);
+            Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->searchTable($search)->assertCanSeeTableRecords([$balance]);
         }
-        Livewire::test(ListStockBalances::class)->searchTable('not-a-product')->assertCountTableRecords(0);
-        Livewire::test(ListStockBalances::class)->filterTable('product', $this->variant->product_id)->assertCanSeeTableRecords([$balance]);
-        Livewire::test(ListStockMovements::class)->searchTable('Distinct inventory product')->assertCanSeeTableRecords([$first, $second]);
-        Livewire::test(ListStockMovements::class)->searchTable($this->variant->sku)->assertCanSeeTableRecords([$first, $second]);
-        Livewire::test(ListStockMovements::class)->filterTable('type', 'sale')->assertCanSeeTableRecords([$second])->assertCanNotSeeTableRecords([$first]);
-        Livewire::test(ListStockMovements::class)->filterTable('created_at', ['from' => now()->addDay()->toDateString()])->assertCountTableRecords(0);
-        Livewire::test(ListStockMovements::class)->filterTable('created_at', ['from' => now()->toDateString(), 'until' => now()->toDateString()])->assertCanSeeTableRecords([$first, $second]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->searchTable('not-a-product')->assertCountTableRecords(0);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->filterTable('product', $this->variant->product_id)->assertCanSeeTableRecords([$balance]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->searchTable('Distinct inventory product')->assertCanSeeTableRecords([$first, $second]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->searchTable($this->variant->sku)->assertCanSeeTableRecords([$first, $second]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->filterTable('type', 'sale')->assertCanSeeTableRecords([$second])->assertCanNotSeeTableRecords([$first]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->filterTable('created_at', ['from' => now()->addDay()->toDateString()])->assertCountTableRecords(0);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->filterTable('created_at', ['from' => now()->toDateString(), 'until' => now()->toDateString()])->assertCanSeeTableRecords([$first, $second]);
     }
 
     public function test_cost_is_not_loaded_or_rendered_without_permission(): void
@@ -89,7 +89,7 @@ class InventoryPagesTest extends TestCase
         $this->actor->unsetRelation('roles')->unsetRelation('permissions');
         $this->assertNull(StockMovementResource::getEloquentQuery()->find($movement->id)->unit_cost);
         $this->assertArrayNotHasKey('cost_price', StockMovementResource::getEloquentQuery()->find($movement->id)->variant->getAttributes());
-        Livewire::test(ListStockMovements::class)->assertSuccessful()->assertDontSee('876.5432');
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->assertSuccessful()->assertDontSee('876.5432');
     }
 
     public function test_module_permissions_navigation_and_direct_urls(): void
@@ -115,8 +115,8 @@ class InventoryPagesTest extends TestCase
         $admin->forceFill(['must_change_password' => false])->save();
         $this->actingAs($admin);
         app(LocationContext::class)->setFor($admin, null);
-        Livewire::test(ListStockBalances::class)->assertCanSeeTableRecords([$this->balance(), $balance]);
-        Livewire::test(ListStockMovements::class)->assertCanSeeTableRecords([$movement]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockBalances::class)->assertCanSeeTableRecords([$this->balance(), $balance]);
+        Livewire::withQueryParams(['stock-view' => 'records'])->test(ListStockMovements::class)->assertCanSeeTableRecords([$movement]);
         Module::where('code', 'inventory')->update(['is_active' => false]);
         $this->assertFalse(StockBalanceResource::canAccess());
         $this->assertSame([], StockMovementResource::getNavigationItems());

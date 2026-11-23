@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\AuditLogger;
@@ -9,6 +10,7 @@ use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Inventory\Models\StockMovement;
+use App\Modules\Payments\Models\PaymentRefund;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
 use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesOrder;
@@ -179,8 +181,11 @@ class SalesReturnService
         if ($lines->isEmpty() || $lines->count() > 200) {
             $this->invalid('source_invalid');
         }
+        $sources = $order->deliveryItems()->whereKey($lines->pluck('sales_delivery_item_id'))
+            ->with(['salesDelivery', 'salesOrderItem', 'stockMovement.inventoryCostEntry'])->get()->keyBy('id');
+        $verifiedDeliveries = [];
         foreach ($lines as $item) {
-            $source = $this->source($order, (int) $item->sales_delivery_item_id);
+            $source = $this->source($order, $sources->get($item->sales_delivery_item_id), $verifiedDeliveries);
             if ((int) $item->variant_id !== (int) $source->salesOrderItem->variant_id
                 || (int) $item->source_order_id !== (int) $order->id || (int) $item->source_location_id !== (int) $order->location_id
                 || (int) $item->source_order_item_id !== (int) $source->sales_order_item_id || $item->unbilled_quantity === null
@@ -196,7 +201,7 @@ class SalesReturnService
     {
         $ids = $return->items()->pluck('id');
         if ($return->posted_at !== null || $return->posted_by !== null || $return->status === 'posted'
-            || $return->creditNotes()->exists() || $return->posTransaction()->exists()
+            || $return->creditNotes()->exists() || $this->hasDownstreamPosEvidence($return)
             || $return->items()->whereHas('creditNoteItems')->exists()
             || $return->posting_payload_hash !== null || $return->posting_evidence_hash !== null || $return->posting_revision !== null
             || $return->costAllocations()->exists() || $return->postedAllocations()->exists()
@@ -209,8 +214,31 @@ class SalesReturnService
         }
     }
 
+    private function hasDownstreamPosEvidence(SalesReturn $return): bool
+    {
+        $transactions = $return->posTransaction()->get();
+        foreach ($transactions as $transaction) {
+            $result = $transaction->result_payload;
+            if ($transaction->transaction_type !== 'return' || $transaction->sync_status !== 'completed'
+                || $transaction->source_pos_transaction_id === null || $transaction->sales_credit_note_id !== null
+                || (int) $transaction->location_id !== (int) $return->location_id
+                || (int) $transaction->cashier_id !== (int) $return->created_by
+                || ($result['return_uuid'] ?? null) !== $return->uuid
+                || ($result['return_number'] ?? null) !== $return->return_number
+                || ($result['return_status'] ?? null) !== 'draft'
+                || ($result['refund_status'] ?? null) !== 'not_started'
+                || ($result['inventory_status'] ?? null) !== 'not_posted') {
+                return true;
+            }
+        }
+
+        return $transactions->isNotEmpty()
+            && PaymentRefund::query()->whereIn('pos_transaction_id', $transactions->modelKeys())->exists();
+    }
+
     public function audit(User $actor, SalesReturn $return, string $event): void
     {
+        app(ReadModelCache::class)->invalidateAfterCommit('sales', $return->getConnection());
         app(AuditLogger::class)->record($event, actor: $actor, metadata: [
             'sales_return_uuid' => $return->uuid, 'sales_order_id' => $return->sales_order_id,
             'location_id' => $return->location_id, 'status' => $return->status, 'revision_number' => $return->revision_number,
@@ -292,9 +320,11 @@ class SalesReturnService
     {
         $order->items()->orderBy('id')->lockForUpdate()->get();
         $order->deliveries()->orderBy('id')->lockForUpdate()->get();
-        $order->deliveryItems()->orderBy('id')->lockForUpdate()->get();
+        $sources = $order->deliveryItems()->with(['salesDelivery', 'salesOrderItem', 'stockMovement.inventoryCostEntry'])
+            ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $verifiedDeliveries = [];
         foreach ($lines as &$line) {
-            $source = $this->source($order, $line['sales_delivery_item_id']);
+            $source = $this->source($order, $sources->get($line['sales_delivery_item_id']), $verifiedDeliveries);
             if (isset($line['variant_id']) && $line['variant_id'] !== (int) $source->salesOrderItem->variant_id) {
                 $this->invalid('source_invalid');
             }
@@ -308,19 +338,22 @@ class SalesReturnService
         return $this->allocations->prepare($order, $lines, $invoiceId, $excludeReturnId);
     }
 
-    private function source(SalesOrder $order, int $id): SalesDeliveryItem
+    /** @param array<int, true> $verifiedDeliveries */
+    private function source(SalesOrder $order, ?SalesDeliveryItem $source, array &$verifiedDeliveries): SalesDeliveryItem
     {
-        $source = $order->deliveryItems()->with(['salesDelivery', 'salesOrderItem', 'stockMovement.inventoryCostEntry'])->find($id);
         $delivery = $source?->salesDelivery;
         if ($source === null || $delivery === null || (int) $delivery->location_id !== (int) $order->location_id
             || $delivery->status !== 'posted' || $delivery->posted_at === null || $delivery->posted_by === null
             || $delivery->posting_payload_hash === null || $delivery->posting_evidence_hash === null || $delivery->cancelled_at !== null
-            || ! hash_equals($delivery->posting_payload_hash, app(SalesDeliveryPostingService::class)->fingerprint($delivery))
+            || (! isset($verifiedDeliveries[$delivery->id]) && ! hash_equals($delivery->posting_payload_hash, app(SalesDeliveryPostingService::class)->fingerprint($delivery)))
             || $source->stockMovement?->inventoryCostEntry?->entry_type !== 'issue'
             || ! BigDecimal::of($source->quantity)->isPositive()) {
             $this->invalid('source_invalid');
         }
-        app(SalesDeliveryPostingService::class)->verifyPostedEvidence($delivery);
+        if (! isset($verifiedDeliveries[$delivery->id])) {
+            app(SalesDeliveryPostingService::class)->verifyPostedEvidence($delivery);
+            $verifiedDeliveries[$delivery->id] = true;
+        }
 
         return $source;
     }

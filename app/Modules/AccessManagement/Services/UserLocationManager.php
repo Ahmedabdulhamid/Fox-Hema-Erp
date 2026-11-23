@@ -2,6 +2,7 @@
 
 namespace App\Modules\AccessManagement\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +25,7 @@ class UserLocationManager
             $changes = $user->locations()->syncWithoutDetaching([$location->getKey()]);
             if ($changes['attached'] !== []) {
                 app(AuditLogger::class)->record('user_location_attached', $user, ['location_id' => $location->getKey()]);
+                app(ReadModelCache::class)->invalidateAfterCommit('access');
             }
             $user->unsetRelation('locations');
         });
@@ -37,6 +39,7 @@ class UserLocationManager
             $detached = $user->locations()->detach($location->getKey()) > 0;
             if ($detached) {
                 app(AuditLogger::class)->record('user_location_detached', $user, ['location_id' => $location->getKey()]);
+                app(ReadModelCache::class)->invalidateAfterCommit('access');
             }
             $user->unsetRelation('locations');
 

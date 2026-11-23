@@ -2,9 +2,11 @@
 
 namespace App\Modules\Products\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Discounts\Models\Discount;
 use App\Modules\Discounts\Services\DiscountManager;
 use App\Modules\Discounts\Services\DiscountReferenceChecker;
@@ -14,7 +16,6 @@ use App\Modules\Taxes\Services\DefinitionAccess;
 use App\Modules\Taxes\Services\TaxManager;
 use App\Modules\Taxes\Services\TaxReferenceChecker;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
@@ -66,7 +67,7 @@ class ProductAssignmentManager
     {
         abort_unless(in_array($kind, ['taxes', 'discounts'], true), 404);
 
-        return Schema::hasTable($kind) && Schema::hasTable($kind === 'taxes' ? 'product_taxes' : 'discount_products') && app(ModuleAccess::class)->isActive($kind);
+        return RequestAuthorizationFacts::tableExists($kind) && RequestAuthorizationFacts::tableExists($kind === 'taxes' ? 'product_taxes' : 'discount_products') && app(ModuleAccess::class)->isActive($kind);
     }
 
     public function validateSelection(User $actor, string $kind, array $ids, ?Product $product = null): void
@@ -106,6 +107,7 @@ class ProductAssignmentManager
             $product = Product::whereKey($product->getKey())->lockForUpdate()->firstOrFail();
             $this->validateSelection($actor, $kind, $ids, $product);
             $product->{$kind}()->sync($ids);
+            app(ReadModelCache::class)->invalidateAfterCommit($kind, $product->getConnection());
         });
     }
 }

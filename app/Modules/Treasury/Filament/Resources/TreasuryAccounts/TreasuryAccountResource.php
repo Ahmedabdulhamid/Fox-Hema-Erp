@@ -50,7 +50,8 @@ class TreasuryAccountResource extends Resource
     public static function types(): array
     {
         return array_map(fn (string $label): string => __($label), [
-            'branch_cashbox' => 'Branch cashbox', 'central_cashbox' => 'Central cashbox', 'location_cashbox' => 'Location cashbox', 'bank' => 'Bank account',
+            'branch_cashbox' => 'Branch cashbox', 'central_cashbox' => 'Central cashbox', 'location_cashbox' => 'Location cashbox',
+            'bank' => 'Bank account', 'provider_settlement' => 'Provider settlement account',
         ]);
     }
 
@@ -72,8 +73,15 @@ class TreasuryAccountResource extends Resource
                 ->disabledOn('edit')->dehydrated(fn (string $operation): bool => $operation === 'create')
                 ->afterStateUpdated(fn (Set $set) => $set('location_id', null)),
             Select::make('location_id')->label(__('Location'))->options(fn (): array => Location::where('is_active', true)
-                ->when(! auth()->user()->isGlobalSuperAdmin() && ! app(TreasuryWorkspace::class)->allows(auth()->user(), TreasuryPermissions::OPERATE_ALL_LOCATIONS, null),
-                    fn (Builder $query) => $query->whereKey(getPermissionsTeamId()))->orderBy('name')->pluck('name', 'id')->all())
+                ->when(! auth()->user()->isGlobalSuperAdmin(), function (Builder $query): Builder {
+                    $actor = auth()->user();
+                    $query->whereIn('locations.id', $actor->locations()->where('locations.is_active', true)->select('locations.id'));
+                    if (! app(TreasuryWorkspace::class)->allows($actor, TreasuryPermissions::OPERATE_ALL_LOCATIONS, null)) {
+                        $query->whereKey(getPermissionsTeamId());
+                    }
+
+                    return $query;
+                })->orderBy('name')->pluck('name', 'id')->all())
                 ->required(fn (Get $get): bool => $get('ownership') === 'location')->disabledOn('edit')->dehydrated(fn (string $operation): bool => $operation === 'create'),
             TextInput::make('currency')->label(__('Currency'))->default('EGP')->readOnly()->required()->disabledOn('edit')->dehydrated(fn (string $operation): bool => $operation === 'create'),
             TextInput::make('bank_name')->label(__('Bank name'))->maxLength(120)->visible(fn (Get $get): bool => $get('type') === 'bank'),

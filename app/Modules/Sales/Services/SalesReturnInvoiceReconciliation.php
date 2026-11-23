@@ -114,17 +114,37 @@ class SalesReturnInvoiceReconciliation
 
     public function unbilled(int $deliveryItemId): string
     {
+        return $this->unbilledQuantities([$deliveryItemId])[$deliveryItemId];
+    }
+
+    /** @param list<int> $deliveryItemIds
+     * @return array<int, string>
+     */
+    public function unbilledQuantities(array $deliveryItemIds): array
+    {
+        if ($deliveryItemIds === []) {
+            return [];
+        }
+        $unbilled = array_fill_keys($deliveryItemIds, '0.0000');
         $posted = DB::table('sales_return_items as i')->join('sales_returns as r', 'r.id', '=', 'i.sales_return_id')
-            ->where('i.sales_delivery_item_id', $deliveryItemId)->where('r.status', 'posted')->select('i.*', 'r.posting_payload_hash')->get();
-        $unbilled = BigDecimal::zero();
+            ->whereIn('i.sales_delivery_item_id', $deliveryItemIds)->where('r.status', 'posted')->select('i.*', 'r.posting_payload_hash')->get();
+        if ($posted->isEmpty()) {
+            return $unbilled;
+        }
+        $returns = SalesReturn::whereKey($posted->pluck('sales_return_id')->unique())->get()->keyBy('id');
+        foreach ($returns as $return) {
+            app(SalesReturnPostingService::class)->verifyFingerprint($return);
+        }
+        $allocations = DB::table('sales_return_posted_allocations')->whereIn('sales_return_item_id', $posted->pluck('id'))
+            ->get()->groupBy('sales_return_item_id');
         foreach ($posted as $item) {
-            app(SalesReturnPostingService::class)->verifyFingerprint(SalesReturn::findOrFail($item->sales_return_id));
-            $rows = DB::table('sales_return_posted_allocations')->where('sales_return_item_id', $item->id)->get();
+            $returns->findOrFail($item->sales_return_id);
+            $rows = $allocations->get($item->id, collect());
             $total = BigDecimal::zero();
             foreach ($rows as $row) {
                 $total = $total->plus($row->quantity);
                 if ($row->sales_invoice_delivery_match_id === null) {
-                    $unbilled = $unbilled->plus($row->quantity);
+                    $unbilled[$item->sales_delivery_item_id] = (string) BigDecimal::of($unbilled[$item->sales_delivery_item_id])->plus($row->quantity)->toScale(4);
                 }
             }
             if ($item->posting_payload_hash === null || ! $total->isEqualTo($item->quantity)) {
@@ -132,7 +152,7 @@ class SalesReturnInvoiceReconciliation
             }
         }
 
-        return (string) $unbilled->toScale(4);
+        return $unbilled;
     }
 
     private function reserve(array &$used, SalesInvoiceDeliveryMatch $match, BigDecimal $quantity): void

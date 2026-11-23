@@ -17,6 +17,7 @@ use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use Livewire\Component;
 
@@ -35,7 +36,8 @@ class VendorBillsTable
             TextColumn::make('status')->label(__('Status'))->badge()->formatStateUsing(fn ($state): string => __(ucfirst($state)))->sortable(),
             TextColumn::make('created_at')->label(__('Created date'))->dateTime()->sortable(),
         ])->filters([SelectFilter::make('status')->label(__('Status'))->options(['draft' => __('Draft'), 'posted' => __('Posted'), 'cancelled' => __('Cancelled')])])
-            ->recordActions([ViewAction::make(), EditAction::make(), ...self::actions(), VendorBillActions::download('ar'), VendorBillActions::download('en')])->toolbarActions([])->defaultSort('id', 'desc');
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items'))
+            ->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), ...self::actions(), VendorBillActions::download('ar'), VendorBillActions::download('en')])->toolbarActions([])->defaultSort('id', 'desc');
     }
 
     public static function actions(): array

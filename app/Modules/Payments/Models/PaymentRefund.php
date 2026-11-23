@@ -5,6 +5,8 @@ namespace App\Modules\Payments\Models;
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\Payments\Services\CustomerAccess;
 use App\Modules\Payments\Services\CustomerRefunds;
+use App\Modules\POS\Models\PosSession;
+use App\Modules\POS\Models\PosTransaction;
 use App\Modules\Sales\Models\SalesCreditNote;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -49,6 +51,16 @@ class PaymentRefund extends Model
     public function delete(): ?bool
     {
         throw ValidationException::withMessages(['document' => __('Customer settlement evidence cannot be deleted.')]);
+    }
+
+    public function posSession(): BelongsTo
+    {
+        return $this->belongsTo(PosSession::class, 'pos_session_id');
+    }
+
+    public function posTransaction(): BelongsTo
+    {
+        return $this->belongsTo(PosTransaction::class, 'pos_transaction_id');
     }
 
     public function payment(): BelongsTo

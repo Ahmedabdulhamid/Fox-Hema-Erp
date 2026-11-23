@@ -6,8 +6,10 @@ use App\Models\Concerns\HasPublicSlug;
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\Discounts\Database\Factories\DiscountFactory;
 use App\Modules\Products\Models\Product;
+use App\Modules\Purchasing\Models\Supplier;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -27,6 +29,7 @@ class Discount extends Model
         'value',
         'scope',
         'usage',
+        'supplier_id',
         'is_active',
         'starts_at',
         'ends_at',
@@ -60,5 +63,10 @@ class Discount extends Model
     public function discountProducts(): HasMany
     {
         return $this->hasMany(DiscountProduct::class, 'discount_id');
+    }
+
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class);
     }
 }

@@ -146,7 +146,11 @@ class TreasuryOperationResource extends Resource
             TextColumn::make('account.location.name')->toggleable(isToggledHiddenByDefault: true)->label(__('Location'))->placeholder(__('Central administration')),
             TextColumn::make('type')->label(__('Entry type'))->formatStateUsing(fn (string $state): string => __(ucwords(str_replace('_', ' ', $state)))),
             TextColumn::make('amount')->label(__('Amount'))->sortable(),
-            TextColumn::make('method')->toggleable(isToggledHiddenByDefault: true)->label(__('Payment method'))->state(fn (TreasuryOperation $record): string => __($record->type === 'transfer' ? 'Internal transfer' : ($record->account->type === 'bank' ? 'Bank transfer' : 'Cash'))),
+            TextColumn::make('method')->toggleable(isToggledHiddenByDefault: true)->label(__('Payment method'))->state(fn (TreasuryOperation $record): string => __($record->type === 'transfer' ? 'Internal transfer' : match ($record->account->type) {
+                'provider_settlement' => 'Provider settlement',
+                'bank' => 'Bank transfer',
+                default => 'Cash',
+            })),
             TextColumn::make('effective_date')->label(__('Transaction date'))->date()->sortable(),
             TextColumn::make('lifecycle')->label(__('Status'))->state(fn (TreasuryOperation $record): string => self::statusLabel($record))->badge(),
             TextColumn::make('source_type')->toggleable(isToggledHiddenByDefault: true)->label(__('Source')),

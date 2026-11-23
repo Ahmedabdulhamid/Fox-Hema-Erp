@@ -7,8 +7,11 @@ use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Inventory\Models\SizeAllocation;
 use App\Modules\InventoryCosting\Services\SizeAllocationValuationService;
+use App\Modules\Products\Models\Color;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
+use App\Modules\Products\Models\Size;
+use App\Modules\Products\Services\ProductVariantManager;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -136,7 +139,9 @@ class SizeAllocationService
             'product_id' => ['required', 'integer'], 'location_id' => ['required', 'integer'],
             'notes' => ['nullable', 'string', 'max:10000'],
             'items' => ['required', 'array', 'min:1', 'max:99'],
-            'items.*.variant_id' => ['required', 'integer', 'distinct'],
+            'items.*.variant_id' => ['nullable', 'integer'],
+            'items.*.size_id' => ['nullable', 'integer'],
+            'items.*.color_id' => ['nullable', 'integer'],
             'items.*.quantity' => ['required', 'regex:/^\d{1,14}(?:\.0{1,4})?$/D'],
         ])->validate();
         $data['product_id'] = (int) $data['product_id'];
@@ -148,16 +153,68 @@ class SizeAllocationService
         if ($source === null || ! $source->is_active || $source->size_id !== null || $source->color_id !== null) {
             $this->invalid('product_id', 'Choose a product with an active unallocated variant.');
         }
-        $data['items'] = array_values(array_map(function (array $item) use ($product): array {
-            $variant = $product->variants()->whereKey($item['variant_id'])->lockForUpdate()->first();
-            if ($variant === null || $variant->isUnallocated() || ! $variant->is_active || $variant->size_id === null || ! $variant->size?->is_active) {
-                $this->invalid('items', 'Choose active size variants belonging to the same product.');
+        $seen = [];
+        $items = [];
+        foreach (array_values($data['items']) as $item) {
+            $variant = null;
+            if (filled($item['variant_id'] ?? null)) {
+                $variant = $product->variants()->whereKey($item['variant_id'])->lockForUpdate()->first();
+                if ($variant === null || $variant->isUnallocated() || ! $variant->is_active || $variant->size_id === null) {
+                    $this->invalid('items', 'Choose an active size variant belonging to the selected product.');
+                }
             }
-            $quantity = BigDecimal::of((string) $item['quantity']);
 
-            return ['variant_id' => (int) $variant->id, 'quantity' => (string) $quantity->toScale(4)];
-        }, array_values($data['items'])));
-        $data['items'] = array_values(array_filter($data['items'], fn (array $item): bool => BigDecimal::of($item['quantity'])->isPositive()));
+            $sizeId = isset($item['size_id']) ? (int) $item['size_id'] : (int) ($variant?->size_id ?? 0);
+            $colorId = array_key_exists('color_id', $item)
+                ? (blank($item['color_id']) ? null : (int) $item['color_id'])
+                : ($variant?->color_id === null ? null : (int) $variant->color_id);
+            if ($sizeId < 1 || ($variant !== null && ((int) $variant->size_id !== $sizeId
+                || (array_key_exists('color_id', $item) && ($variant->color_id === null ? null : (int) $variant->color_id) !== $colorId)))) {
+                $this->invalid('items', 'Choose a valid size and color combination.');
+            }
+
+            $size = Size::whereKey($sizeId)->lockForUpdate()->first();
+            if ($size === null || ! $size->is_active) {
+                $this->invalid('items', 'Choose an active size from the existing size catalog.');
+            }
+            if ($colorId !== null) {
+                $color = Color::whereKey($colorId)->lockForUpdate()->first();
+                if ($color === null || ! $color->is_active) {
+                    $this->invalid('items', 'Choose an active color from the existing color catalog.');
+                }
+            }
+
+            $combination = $sizeId.':'.($colorId ?? 'none');
+            if (isset($seen[$combination])) {
+                $this->invalid('items', 'A color and size combination can only be allocated once.');
+            }
+            $seen[$combination] = true;
+
+            $quantity = BigDecimal::of((string) $item['quantity']);
+            if (! $quantity->isPositive()) {
+                continue;
+            }
+
+            if ($variant === null) {
+                $variantQuery = $product->variants()->where('size_id', $sizeId);
+                $variant = $colorId === null
+                    ? $variantQuery->whereNull('color_id')->lockForUpdate()->first()
+                    : $variantQuery->where('color_id', $colorId)->lockForUpdate()->first();
+                if ($variant !== null && (! $variant->is_active || $variant->isUnallocated())) {
+                    $this->invalid('items', 'This size and color combination exists but is not active.');
+                }
+                if ($variant === null) {
+                    $variant = app(ProductVariantManager::class)->save($actor, $product, [
+                        'size_id' => $sizeId,
+                        'color_id' => $colorId,
+                        'is_active' => true,
+                    ]);
+                }
+            }
+
+            $items[] = ['variant_id' => (int) $variant->id, 'quantity' => (string) $quantity->toScale(4)];
+        }
+        $data['items'] = $items;
         if ($data['items'] === []) {
             $this->invalid('items', 'Allocate a positive number of individual pieces.');
         }
@@ -183,6 +240,7 @@ class SizeAllocationService
             $variant = ProductVariant::whereKey($item->variant_id)->lockForUpdate()->firstOrFail();
             if ($variant->isUnallocated() || ! $variant->is_active || (int) $variant->product_id !== (int) $allocation->product_id
                 || $variant->size_id === null || ! $variant->size?->is_active
+                || ($variant->color_id !== null && ! $variant->color?->is_active)
                 || ! preg_match('/^\d{1,14}\.0000$/D', $item->quantity) || ! BigDecimal::of($item->quantity)->isPositive()
                 || $item->movements()->exists()) {
                 $this->invalid('items', 'Allocation lines are invalid or already linked to stock movements.');

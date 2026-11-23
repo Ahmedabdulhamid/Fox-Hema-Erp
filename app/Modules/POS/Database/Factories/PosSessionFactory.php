@@ -18,6 +18,12 @@ class PosSessionFactory extends Factory
         return [
             'pos_device_id' => PosDevice::factory(),
             'location_id' => fn (array $attributes): int => PosDevice::findOrFail($attributes['pos_device_id'])->location_id,
+            'cash_treasury_account_id' => null,
+            'currency' => 'EGP',
+            'opening_key' => null,
+            'opening_payload_hash' => null,
+            'closing_key' => null,
+            'closing_payload_hash' => null,
             'session_number' => fake()->unique()->uuid(),
             'opened_by' => User::factory(),
             'closed_by' => null,

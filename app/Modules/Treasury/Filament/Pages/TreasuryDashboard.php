@@ -2,6 +2,7 @@
 
 namespace App\Modules\Treasury\Filament\Pages;
 
+use App\Filament\ReadModelCache;
 use App\Modules\Purchasing\Filament\Resources\VendorPayments\VendorPaymentResource;
 use App\Modules\Treasury\Filament\Resources\TreasuryAccounts\TreasuryAccountResource;
 use App\Modules\Treasury\Services\TreasuryPermissions;
@@ -43,7 +44,8 @@ class TreasuryDashboard extends Page
         $accounts = $workspace->accountsWithBalances(auth()->user());
 
         return [
-            'groups' => DB::query()->fromSub($accounts->toBase(), 'accounts')->selectRaw('type, COUNT(*) as account_count, SUM(ledger_balance) as balance')->groupBy('type')->get(),
+            'groups' => collect(app(ReadModelCache::class)->remember('treasury', ['dashboard', $accounts->toSql(), $accounts->getBindings()],
+                fn (): array => DB::query()->fromSub($accounts->toBase(), 'accounts')->selectRaw('type, COUNT(*) as account_count, SUM(ledger_balance) as balance')->groupBy('type')->get()->map(fn ($row): array => (array) $row)->all(), config('read_cache.report_ttl')))->map(fn (array $row): object => (object) $row),
             'recent' => $workspace->operations(auth()->user())->latest('id')->limit(10)->get(),
         ];
     }

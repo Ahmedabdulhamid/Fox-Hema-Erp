@@ -17,6 +17,9 @@ class PosCashMovementFactory extends Factory
         return [
             'pos_session_id' => PosSession::factory(),
             'reference_number' => fake()->unique()->uuid(),
+            'idempotency_key' => fake()->unique()->uuid(),
+            'payload_fingerprint' => null,
+            'treasury_operation_id' => null,
             'movement_type' => 'cash_in',
             'direction' => 'in',
             'amount' => '50.0000',

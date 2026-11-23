@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\POS\Models\PosCashMovement;
 use App\Modules\POS\Models\PosDevice;
+use App\Modules\POS\Models\PosDevicePaymentMethod;
 use App\Modules\POS\Models\PosSession;
 use App\Modules\POS\Models\PosSessionTender;
 use App\Modules\POS\Models\PosTransaction;
@@ -12,6 +13,8 @@ use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesInvoice;
 use App\Modules\Sales\Models\SalesOrder;
 use App\Modules\Sales\Models\SalesReturn;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -121,12 +124,50 @@ class PosModelsTest extends TestCase
             $this->assertSame(42, $model->{$key});
             $this->assertTrue($model->{$relation}->is($actor));
         }
+
         $original = (new PosCashMovement)->forceFill(['id' => 12]);
         $correction = new PosCashMovement(['movement_type' => 'correction', 'direction' => 'out']);
         $correction->correctsMovement()->associate($original);
         $this->assertSame(12, $correction->corrects_movement_id);
         $this->assertTrue($correction->correctsMovement->is($original));
         $this->assertSame('pos_cash_movements.corrects_movement_id', $original->corrections()->getQualifiedForeignKeyName());
+    }
+
+    public function test_device_payment_and_treasury_relationships_use_phase_one_foreign_keys(): void
+    {
+        $device = new PosDevice;
+        $configuration = new PosDevicePaymentMethod;
+        $session = new PosSession;
+        $tender = new PosSessionTender;
+        $movement = new PosCashMovement;
+
+        $this->assertInstanceOf(BelongsToMany::class, $device->paymentMethods());
+        $this->assertSame('pos_device_payment_methods.pos_device_id', $device->paymentMethods()->getQualifiedForeignPivotKeyName());
+        $this->assertSame('pos_device_payment_methods.payment_method_id', $device->paymentMethods()->getQualifiedRelatedPivotKeyName());
+        $this->assertSame('uuid', $configuration->getRouteKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $configuration->posDevice());
+        $this->assertSame('pos_device_id', $configuration->posDevice()->getForeignKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $configuration->paymentMethod());
+        $this->assertSame('payment_method_id', $configuration->paymentMethod()->getForeignKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $configuration->treasuryAccount());
+        $this->assertSame('treasury_account_id', $configuration->treasuryAccount()->getForeignKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $session->cashTreasuryAccount());
+        $this->assertSame('cash_treasury_account_id', $session->cashTreasuryAccount()->getForeignKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $tender->paymentMethod());
+        $this->assertSame('payment_method_id', $tender->paymentMethod()->getForeignKeyName());
+        $this->assertInstanceOf(BelongsTo::class, $movement->treasuryOperation());
+        $this->assertSame('treasury_operation_id', $movement->treasuryOperation()->getForeignKeyName());
+
+        foreach ([
+            [$session, ['cash_treasury_account_id', 'opening_key', 'opening_payload_hash', 'closing_key', 'closing_payload_hash']],
+            [$movement, ['idempotency_key', 'payload_fingerprint', 'treasury_operation_id']],
+            [$tender, ['payment_method_id']],
+            [$configuration, ['uuid', 'pos_device_id', 'payment_method_id', 'treasury_account_id', 'is_active']],
+        ] as [$model, $fields]) {
+            foreach ($fields as $field) {
+                $this->assertTrue($model->isFillable($field), $field.' must be mass assignable to its service.');
+            }
+        }
     }
 
     public function test_transaction_sales_links_have_singular_inverse_relationships(): void

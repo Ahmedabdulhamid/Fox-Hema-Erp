@@ -2,11 +2,12 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Models\QuantityFormatter;
 use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
-use App\Modules\Purchasing\Services\PurchaseReceiptService;
+use App\Modules\Purchasing\Services\PurchasingDisplay;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Filament\Infolists\Components\RepeatableEntry;
@@ -44,13 +45,27 @@ class PurchaseReceiptInfolist
                         TextEntry::make('quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Quantity to receive')),
                         TextEntry::make('unit_cost')->label(__('Actual unit purchase cost (EGP)')),
                         TextEntry::make('purchase_value')->label(__('Purchase value (EGP)'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->quantity)->multipliedBy($record->unit_cost)->toScale(4, RoundingMode::HalfUp)),
-                        MasterDetail::entry(fn (): array => self::lineDetails()),
+                        MasterDetail::entry(function (PurchaseReceiptItem $record): array {
+                            $record->loadMissing('purchaseReceipt.purchaseOrder');
+                            if ((int) $record->purchase_order_id === (int) $record->purchaseReceipt->purchase_order_id) {
+                                $record->setRelation('purchaseOrder', $record->purchaseReceipt->purchaseOrder);
+                            }
+                            $record->loadMissing('purchaseOrder');
+
+                            $received = RequestDisplayData::remember(
+                                'purchase-receipt.received.'.$record->purchase_order_id,
+                                fn (): array => app(PurchasingDisplay::class)->received(auth()->user(), $record->purchaseOrder),
+                            );
+
+                            return self::lineDetails($received);
+                        }),
                     ]),
             TextEntry::make('notes')->label(__('Notes')),
         ])->columns(1);
     }
 
-    private static function lineDetails(): array
+    /** @param array<int, string> $received */
+    private static function lineDetails(array $received): array
     {
         return [
             Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
@@ -59,13 +74,13 @@ class PurchaseReceiptInfolist
             Section::make(__('Quantities'))->columns(['default' => 1, 'sm' => 2])->schema([
                 TextEntry::make('purchaseOrderItem.quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity')),
                 TextEntry::make('expected_quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Expected quantity')),
-                TextEntry::make('previously_received')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Previously received quantity'))->state(function (PurchaseReceiptItem $record): string {
-                    $total = app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0';
+                TextEntry::make('previously_received')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Previously received quantity'))->state(function (PurchaseReceiptItem $record) use ($received): string {
+                    $total = $received[$record->purchase_order_item_id] ?? '0';
 
                     return (string) BigDecimal::of($total)->minus($record->purchaseReceipt->status === 'posted' ? $record->quantity : '0')->toScale(4);
                 }),
                 TextEntry::make('remaining')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Remaining quantity'))->state(fn (PurchaseReceiptItem $record): string => (string) BigDecimal::of($record->purchaseOrderItem->quantity)
-                    ->minus(app(PurchaseReceiptService::class)->received($record->purchaseOrder)[$record->purchase_order_item_id] ?? '0')->toScale(4)),
+                    ->minus($received[$record->purchase_order_item_id] ?? '0')->toScale(4)),
                 TextEntry::make('quantity')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Quantity to receive')),
             ]),
             Section::make(__('Purchasing'))->columns(['default' => 1, 'sm' => 2])->schema([

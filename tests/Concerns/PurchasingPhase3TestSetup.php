@@ -2,6 +2,8 @@
 
 namespace Tests\Concerns;
 
+use App\Modules\AccessManagement\Services\DocumentNumberService;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
@@ -31,9 +33,10 @@ trait PurchasingPhase3TestSetup
         }
         $paths = ['app/Modules/AccessManagement/Database/Migrations', 'app/Modules/Products/Database/Migrations',
             'app/Modules/Inventory/Database/Migrations', 'app/Modules/InventoryCosting/Database/Migrations',
-            'app/Modules/Discounts/Database/Migrations', 'app/Modules/Taxes/Database/Migrations'];
+            'app/Modules/Discounts/Database/Migrations', 'app/Modules/Taxes/Database/Migrations',
+            'app/Modules/Sales/Database/Migrations'];
         foreach (glob(app_path('Modules/Purchasing/Database/Migrations/*.php')) as $file) {
-            if (! preg_match('/create_vendor_payment_allocations|add_lookup_indexes/', $file)
+            if (! preg_match('/create_vendor_payment_allocations|add_vendor_payment_lifecycle_metadata|add_lookup_indexes/', $file)
                 && (($includeBillMatches && DB::getDriverName() !== 'sqlite') || ! str_contains($file, 'create_vendor_bill_receipt_matches'))) {
                 $paths[] = 'app/Modules/Purchasing/Database/Migrations/'.basename($file);
             }
@@ -43,8 +46,10 @@ trait PurchasingPhase3TestSetup
                 throw new LogicException('Unexpected isolated purchasing connection.');
             }
         }
-        $options = DB::getDriverName() === 'mysql' ? ['--force' => true] : ['--path' => $paths, '--force' => true];
+        $options = ['--path' => $paths, '--force' => true];
         $this->artisan('migrate', $options)->assertExitCode(0);
+        RequestAuthorizationFacts::forget();
+        app(DocumentNumberService::class)->resetInstalledCache();
         if ($includeBillMatches && DB::getDriverName() === 'sqlite') {
             DB::statement('CREATE TABLE vendor_bill_receipt_matches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

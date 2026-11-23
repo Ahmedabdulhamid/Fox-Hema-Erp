@@ -2,6 +2,7 @@
 
 namespace App\Modules\Products\Filament\Resources\Products\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Products\Filament\MasterDetail;
@@ -27,9 +28,9 @@ class ProductInfolist
             Grid::make(['default' => 1, 'lg' => 3])->columnSpanFull()->schema([
                 Section::make(__('Product images'))->icon('heroicon-o-photo')->columnSpan(['default' => 1, 'lg' => 1])->extraAttributes(['class' => 'fox-product-gallery'])->schema([
                     ImageEntry::make('gallery')->hiddenLabel()->disk('public')->height(120)
-                        ->state(fn (Product $record): array => $record->images()->where('disk', 'public')->whereNull('product_variant_id')->orderByDesc('is_primary')->orderBy('sort_order')->pluck('path')->all())
+                        ->state(fn (Product $record): array => RequestDisplayData::remember('product.gallery.'.$record->id, fn (): array => $record->images()->where('disk', 'public')->whereNull('product_variant_id')->orderByDesc('is_primary')->orderBy('sort_order')->pluck('path')->all()))
                         ->placeholder(__('No product images')),
-                    RepeatableEntry::make('variant_images')->hiddenLabel()->state(fn (Product $record) => $record->images()->with(['variant.color', 'variant.size'])->where('disk', 'public')->whereNotNull('product_variant_id')->orderBy('sort_order')->get())->schema([
+                    RepeatableEntry::make('variant_images')->hiddenLabel()->state(fn (Product $record): Collection => RequestDisplayData::remember('product.variant-images.'.$record->id, fn (): Collection => $record->images()->with(['variant.color', 'variant.size'])->where('disk', 'public')->whereNotNull('product_variant_id')->orderBy('sort_order')->get()))->schema([
                         ImageEntry::make('path')->hiddenLabel()->disk('public')->height(120),
                         TextEntry::make('variant_label')->label(__('Variant'))->state(__('General product'))->formatStateUsing(fn ($record) => $record->variant ? view('components.variant-summary', ['variant' => $record->variant]) : __('General product')),
                     ]),
@@ -47,7 +48,7 @@ class ProductInfolist
                     TextEntry::make('updated_at')->label(__('Updated at'))->dateTime()->placeholder(__('Not recorded')),
                 ]),
             ]),
-            Section::make(__('Prices & sellable variants'))->icon('heroicon-o-currency-dollar')->columnSpanFull()->schema([
+            Section::make(__('Variants & inventory identities'))->icon('heroicon-o-currency-dollar')->columnSpanFull()->schema([
                 RepeatableEntry::make('variant_summary')->hiddenLabel()->extraAttributes(['class' => 'fox-master-detail-table'])->table([
                     TableColumn::make(__('SKU')), TableColumn::make(__('Variant')), TableColumn::make(__('Sale price')), TableColumn::make(__('View Details')),
                 ])->state(function (Product $record): Collection {
@@ -56,7 +57,8 @@ class ProductInfolist
                         $columns[] = 'cost_price';
                     }
 
-                    return $record->variants()->with(['size', 'color'])->get($columns)->each(fn (ProductVariant $variant) => $variant->setRelation('product', $record));
+                    return RequestDisplayData::remember('product.variant-summary:'.json_encode([$record->id, $columns], JSON_THROW_ON_ERROR),
+                        fn (): Collection => $record->variants()->with(['size', 'color'])->get($columns)->each(fn (ProductVariant $variant) => $variant->setRelation('product', $record)));
                 })->schema([
                     TextEntry::make('sku')->label(__('SKU'))->copyable(),
                     View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => $record]),
@@ -76,10 +78,13 @@ class ProductInfolist
             Section::make(__('Variant'))->columns(['default' => 1, 'sm' => 2])->schema([
                 TextEntry::make('sku')->label(__('SKU'))->copyable(),
                 TextEntry::make('barcode')->label(__('Barcode'))->placeholder(__('No barcode'))->formatStateUsing(fn ($state) => view('components.barcode-preview', ['value' => $state])),
-                TextEntry::make('size.name')->label(__('Size'))->placeholder(__('No size')),
-                TextEntry::make('color.name')->label(__('Color'))->default(__('No color')),
+                TextEntry::make('inventory_identity')->label(__('Inventory identity'))
+                    ->state(__('Unallocated pieces').' — '.__('Sizes Not Yet Allocated'))
+                    ->visible(fn (ProductVariant $record): bool => $record->isUnallocated())->columnSpanFull(),
+                TextEntry::make('size.name')->label(__('Size'))->placeholder(__('No size'))->hidden(fn (ProductVariant $record): bool => $record->isUnallocated()),
+                TextEntry::make('color.name')->label(__('Color'))->default(__('No color'))->hidden(fn (ProductVariant $record): bool => $record->isUnallocated()),
             ]),
-            Section::make(__('Prices & sellable variants'))->columns(['default' => 1, 'sm' => 2])->schema([
+            Section::make(__('Prices & sellable variants'))->hidden(fn (ProductVariant $record): bool => $record->isUnallocated())->columns(['default' => 1, 'sm' => 2])->schema([
                 TextEntry::make('sale_price')->label(__('Sale price'))->state(fn (ProductVariant $record) => app(SellingPriceResolver::class)->resolve($record))->formatStateUsing(fn ($state): string => MoneyFormatter::precise($state)),
                 TextEntry::make('cost_price')->label(__('Reference cost'))->formatStateUsing(fn ($state): string => MoneyFormatter::precise($state))->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user())),
                 TextEntry::make('profitability')->label(__('Estimated profitability'))->columnSpanFull()->visible(fn (): bool => app(ProductsAccess::class)->referenceCost(auth()->user()))

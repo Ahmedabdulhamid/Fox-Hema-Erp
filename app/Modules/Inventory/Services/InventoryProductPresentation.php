@@ -105,7 +105,7 @@ class InventoryProductPresentation
         if ($kind !== 'quarantine' && $rows->isNotEmpty() && $access->allows($actor, InventoryPermissions::ALLOCATIONS_VIEW)) {
             $poolQuery = app(AllocationStockStatus::class)->query($actor)->whereIn('product_id', $rows->pluck('product_id'));
             $poolQuery->whereIn('allocation_location_id', $groupLocations ? $rows->pluck('location_id') : DB::query()->fromSub($source->toBase(), 'permitted_stock_locations')->select('location_id'));
-            $pools = $poolQuery->get()->keyBy(fn (ProductVariant $pool): string => $pool->product_id.'-'.$pool->allocation_location_id);
+            $pools = $poolQuery->setEagerLoads([])->get()->keyBy(fn (ProductVariant $pool): string => $pool->product_id.'-'.$pool->allocation_location_id);
         }
         foreach ($rows as $row) {
             $row->variant = $variants->get($row->id);

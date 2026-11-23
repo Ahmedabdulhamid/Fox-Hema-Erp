@@ -11,7 +11,7 @@ return [
         'is_active' => 'Status',
         'requires_reference' => 'Requires transaction reference',
         'sort_order' => 'Sort order',
-        'available_in_pos' => 'Availability',
+        'available_in_pos' => 'Available in POS',
     ],
     'types' => [
         'cash' => 'Cash',
@@ -29,6 +29,7 @@ return [
     'no' => 'No',
     'name_help' => 'Enter Arabic, English, or both. Default methods have bilingual names.',
     'type_help' => 'The type cannot change after creation. Create another method when a different type is needed.',
+    'available_in_pos_help' => 'When enabled, this payment method can be assigned to POS devices.',
     'status_help' => 'Deactivation prevents new use. Historical payment references are preserved.',
     'actions' => [
         'create' => 'Create payment method',

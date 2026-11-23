@@ -61,13 +61,7 @@ class DatabaseSessionResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        $q = parent::getEloquentQuery()->with('user');
-        $user = auth()->user();
-        if ($user?->isGlobalSuperAdmin()) {
-            return $q;
-        }
-
-        return $q->where(fn ($x) => $x->where('user_id', $user->id)->orWhereHas('user.locations', fn ($l) => $l->whereKey(getPermissionsTeamId())));
+        return parent::getEloquentQuery()->with('user')->visibleTo(auth()->user());
     }
 
     public static function getPages(): array

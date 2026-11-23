@@ -4,8 +4,10 @@ namespace App\Modules\Payments\Models;
 
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\Payments\Database\Factories\PaymentMethodFactory;
+use App\Modules\POS\Models\PosDevice;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Validation\ValidationException;
 
@@ -53,5 +55,12 @@ class PaymentMethod extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function posDevices(): BelongsToMany
+    {
+        return $this->belongsToMany(PosDevice::class, 'pos_device_payment_methods')
+            ->withPivot(['uuid', 'treasury_account_id', 'is_active'])
+            ->withTimestamps();
     }
 }

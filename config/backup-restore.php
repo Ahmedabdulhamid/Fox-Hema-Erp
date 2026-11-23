@@ -1,0 +1,53 @@
+<?php
+
+return [
+    'capture' => [
+        'enabled' => env('BACKUP_CAPTURE_ENABLED', true),
+        'accounts_approved' => true,
+        'instance_lock_approved' => true,
+        'guard_connection' => env('BACKUP_GUARD_CONNECTION'),
+        'dump_connection' => env('BACKUP_DUMP_CONNECTION'),
+    ],
+    'restore' => [
+        'enabled' => env('BACKUP_RESTORE_ENABLED', false),
+        'root' => storage_path('framework/erp-recovery'),
+        'database' => [
+            'host' => env('BACKUP_RESTORE_DATABASE_HOST'),
+            'port' => env('BACKUP_RESTORE_DATABASE_PORT') === null ? null : (int) env('BACKUP_RESTORE_DATABASE_PORT'),
+            'username' => env('BACKUP_RESTORE_DATABASE_USERNAME'),
+            'password' => env('BACKUP_RESTORE_DATABASE_PASSWORD'),
+        ],
+        'client_binary' => env('BACKUP_RESTORE_CLIENT_BINARY'),
+        'max_bytes' => 512 * 1024 * 1024,
+        'max_statement_bytes' => 16 * 1024 * 1024,
+        'timeout' => 600,
+    ],
+    'automation' => [
+        'controller_enabled' => env('BACKUP_AUTOMATION_CONTROLLER_ENABLED', false),
+        'scheduling_approved' => env('BACKUP_SCHEDULING_APPROVED', false),
+        'retention_deletion_approved' => false,
+        'notification_delivery_approved' => false,
+        'conditional_delete_verified' => false,
+        'approved_deletion_scope' => null,
+        'schedule_grace_minutes' => 60,
+    ],
+    'database' => env('BACKUP_DATABASE', 'fox_hema_pos'),
+    'dump_binary' => env('BACKUP_DUMP_BINARY'),
+    'dump_timeout' => 120,
+    'queue_connection' => env('BACKUP_QUEUE_CONNECTION', 'backup_database'),
+    'queue' => 'backups',
+    'job_timeout' => 600,
+    'lease_seconds' => 90,
+    'queue_stale_seconds' => 900,
+    'workspace_root' => storage_path('framework/erp-backups'),
+    'key_id' => env('BACKUP_ENCRYPTION_KEY_ID', 'v1'),
+    'key_files' => [env('BACKUP_ENCRYPTION_KEY_ID', 'v1') => env('BACKUP_ENCRYPTION_KEY_FILE')],
+    'release_id' => env('BACKUP_RELEASE_ID'),
+    'max_files' => 10000,
+    'max_manifest_bytes' => 8 * 1024 * 1024,
+    'max_archive_bytes' => 64 * 1024 * 1024 * 1024,
+    'private_paths' => [],
+    'excluded_directories' => ['livewire-tmp', 'tmp', 'temp', 'cache', 'caches', 'sessions', 'logs', 'previews', 'inventory-previews', 'navbar-previews', 'mpdf'],
+    // Inspection found only generated UI/audit artifacts in the current private disk.
+    'private_excluded_files' => ['.gitignore', 'master-detail-report.txt', 'numeric-formatting-report.txt', 'order-layout-login.png', 'product-variant-purchasing-audit.md', 'product-variant-purchasing-fix-report.md'],
+];

@@ -43,7 +43,7 @@ class SalesDeliveryForm
                         Select::make('sales_order_item_id')->label(__('Order line'))->required()->searchable()->live()->columnSpanFull()
                             ->options(fn (Get $get): array => app(DocumentSelectors::class)->lines(auth()->user(), 'delivery', $get('../../sales_order_id'), '', $get('brand_id'), $get('product_id')))
                             ->getSearchResultsUsing(fn (Get $get, string $search): array => app(DocumentSelectors::class)->lines(auth()->user(), 'delivery', $get('../../sales_order_id'), $search, $get('brand_id'), $get('product_id')))
-                            ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'delivery', $get('../../sales_order_id'), $value))
+                            ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'delivery', $get('../../sales_order_id'), $value, array_column($get('../../items') ?? [], 'sales_order_item_id')))
                             ->disableOptionsWhenSelectedInSiblingRepeaterItems()
                             ->afterStateUpdated(fn (Set $set) => $set('id', null)),
                         Text::make(fn (Get $get): string => self::detail($get, 'ordered', 'Ordered quantity')),
@@ -67,7 +67,7 @@ class SalesDeliveryForm
 
     private static function detail(Get $get, string $key, string $label): string
     {
-        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'delivery', $get('../../sales_order_id'), $get('sales_order_item_id'));
+        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'delivery', $get('../../sales_order_id'), $get('sales_order_item_id'), array_column($get('../../items') ?? [], 'sales_order_item_id'));
 
         return __($label).': '.($details[$key] ?? '—');
     }

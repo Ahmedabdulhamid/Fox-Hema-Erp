@@ -24,7 +24,7 @@ require dirname(__DIR__, 2).'/vendor/autoload.php';
 
 $database = getenv('DB_DATABASE');
 if (getenv('APP_ENV') !== 'testing' || ! is_string($database)
-    || ! preg_match('/^codex_public_ids_test_purchasing_[a-zA-Z0-9_]+$/D', $database)) {
+    || ! preg_match('/^codex_public_ids_test_(?:purchasing|treasury)_[a-zA-Z0-9_]+$/D', $database)) {
     exit(2);
 }
 $app = require dirname(__DIR__, 2).'/bootstrap/app.php';

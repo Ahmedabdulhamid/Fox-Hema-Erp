@@ -76,7 +76,7 @@ class AccessScopeUiTest extends TestCase
             'name' => 'Scoped user', 'email' => 'scoped@example.test', 'password' => 'a-secure-test-password', 'password_confirmation' => 'a-secure-test-password',
             'location_ids' => [$location->id], 'access_location_id' => $location->id,
         ])->callAction(TestAction::make('createOption')->schemaComponent('role_ids'), data: ['name' => 'Cashier', 'permission_ids' => [$permission->id]])->assertHasNoFormErrors();
-        $role = Role::where('name', 'Cashier')->firstOrFail();
+        $role = Role::where('name', 'Cashier')->where('location_id', $location->id)->firstOrFail();
         $this->assertSame($location->id, $role->location_id);
         $this->assertTrue($role->hasPermissionTo($permission));
         $page->callAction(TestAction::make('createOption')->schemaComponent('role_ids'), data: ['name' => 'Cashier'])

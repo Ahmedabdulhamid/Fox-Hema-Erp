@@ -202,6 +202,9 @@ class PurchaseOrderManagementTest extends TestCase
         $this->assertTrue($order->is($retry));
         $this->assertSame(1, $retry->items()->count());
         $this->reject(fn () => $this->service->create($this->actor, $this->payload(['notes' => 'different']), $token));
+        $differentLine = $this->payload();
+        $differentLine['items'][0]['unit_price'] = '2001';
+        $this->reject(fn () => $this->service->create($this->actor, $differentLine, $token));
         $legacy = PurchaseOrder::factory()->create(['order_number' => 'PO-00001']);
         $numbers = [$order->order_number, $legacy->order_number];
         for ($index = 0; $index < 10; $index++) {

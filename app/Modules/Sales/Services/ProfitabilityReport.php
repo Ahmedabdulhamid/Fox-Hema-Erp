@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\InventoryCosting\Services\ProfitabilityCalculator;
 use App\Modules\Sales\Models\SalesDeliveryItem;
@@ -30,19 +31,26 @@ class ProfitabilityReport
     public function events(User $actor, string $from, string $until, ?int $locationId = null, ?int $orderId = null): Builder
     {
         abort_unless($this->canView($actor, $locationId), 403);
+        $locationId = $actor->isGlobalSuperAdmin() ? $locationId : (int) getPermissionsTeamId();
+
+        return $this->projectionEvents($from, $until, $locationId, $orderId);
+    }
+
+    /** Authoritative event builder for background projections; interactive callers must use events(). */
+    public function projectionEvents(string $from, string $until, ?int $locationId, ?int $orderId = null): Builder
+    {
         Validator::make(['from' => $from, 'until' => $until], [
             'from' => ['required', 'date_format:Y-m-d'], 'until' => ['required', 'date_format:Y-m-d', 'after_or_equal:from'],
         ])->validate();
         abort_if(CarbonImmutable::parse($from)->diffInDays(CarbonImmutable::parse($until)) > 366, 422, __('Choose a date range of at most 366 days.'));
         $start = $from.' 00:00:00';
         $end = CarbonImmutable::parse($until)->addDay()->format('Y-m-d').' 00:00:00';
-        $locationId = $actor->isGlobalSuperAdmin() ? $locationId : (int) getPermissionsTeamId();
         $deliveries = $this->deliveries($locationId, $orderId);
         $returns = $this->returns($deliveries, $start, $end, $locationId, $orderId);
         $sales = DB::query()->fromSub(clone $deliveries, 'd')->where('d.posted_at', '>=', $start)->where('d.posted_at', '<', $end)
-            ->selectRaw('d.order_id, d.location_id, d.variant_id, d.posted_at, d.net AS revenue, d.cost, d.missing, 0 AS return_loss, 0 AS return_variance');
+            ->selectRaw("d.order_id, d.location_id, d.variant_id, d.posted_at, d.net AS revenue, d.cost, d.missing, 0 AS return_loss, 0 AS return_variance, 'delivery' AS event_type, d.quantity, 'EGP' AS currency");
         $refunds = DB::query()->fromSub(clone $returns, 'r')->where('r.posted_at', '>=', $start)->where('r.posted_at', '<', $end)
-            ->selectRaw('r.order_id, r.location_id, r.variant_id, r.posted_at, -r.net AS revenue, -r.cost AS cost, r.missing, r.return_loss, r.return_variance');
+            ->selectRaw("r.order_id, r.location_id, r.variant_id, r.posted_at, -r.net AS revenue, -r.cost AS cost, r.missing, r.return_loss, r.return_variance, 'return' AS event_type, r.quantity, 'EGP' AS currency");
         $previousCredits = "(SELECT COALESCE(SUM(pc.quantity), 0) FROM sales_credit_note_items pc JOIN sales_credit_notes pn ON pn.id = pc.sales_credit_note_id JOIN document_numbers pd ON pd.document_uuid = pn.uuid AND pd.document_type = 'CN' WHERE pc.sales_return_item_id = ci.sales_return_item_id AND pn.status = 'posted' AND pd.id < dn.id)";
         $creditedReturn = $this->allocation('r.net', 'r.quantity', $previousCredits, 'ci.quantity');
         $credits = DB::table('sales_credit_note_items as ci')->join('sales_credit_notes as cn', 'cn.id', '=', 'ci.sales_credit_note_id')
@@ -50,14 +58,16 @@ class ProfitabilityReport
             ->joinSub($returns, 'r', 'r.id', '=', 'ci.sales_return_item_id')
             ->where('cn.status', 'posted')->whereNotNull('cn.posting_payload_hash')->whereNotNull('cn.posted_by')
             ->whereColumn('cn.location_id', 'r.location_id')->where('cn.posted_at', '>=', $start)->where('cn.posted_at', '<', $end)
-            ->selectRaw("r.order_id, r.location_id, r.variant_id, cn.posted_at, ($creditedReturn - (ci.subtotal - ci.discount_amount)) AS revenue, 0 AS cost, r.missing, 0 AS return_loss, 0 AS return_variance");
+            ->selectRaw("r.order_id, r.location_id, r.variant_id, cn.posted_at, ($creditedReturn - (ci.subtotal - ci.discount_amount)) AS revenue, 0 AS cost, r.missing, 0 AS return_loss, 0 AS return_variance, 'credit' AS event_type, ci.quantity, 'EGP' AS currency");
 
         return DB::query()->fromSub($sales->unionAll($refunds)->unionAll($credits), 'events');
     }
 
     public function summary(Builder $events): array
     {
-        $row = (clone $events)->selectRaw('COALESCE(SUM(revenue), 0) AS revenue, COALESCE(SUM(cost), 0) AS cost, COALESCE(SUM(missing), 0) AS missing, COALESCE(SUM(return_loss), 0) AS return_loss, COALESCE(SUM(return_variance), 0) AS return_variance')->first();
+        $query = (clone $events)->selectRaw('COALESCE(SUM(revenue), 0) AS revenue, COALESCE(SUM(cost), 0) AS cost, COALESCE(SUM(missing), 0) AS missing, COALESCE(SUM(return_loss), 0) AS return_loss, COALESCE(SUM(return_variance), 0) AS return_variance');
+        $row = (object) app(ReadModelCache::class)->remember('sales', ['profitability-summary', $query->toSql(), $query->getBindings()],
+            fn (): array => (array) $query->first(), config('read_cache.report_ttl'), $query->getConnection());
 
         return app(ProfitabilityCalculator::class)->calculate((string) $row->revenue, $row->missing > 0 ? null : (string) $row->cost)
             + ['missing' => (int) $row->missing, 'return_loss' => (string) $row->return_loss, 'return_variance' => (string) $row->return_variance];

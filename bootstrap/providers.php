@@ -1,7 +1,9 @@
 <?php
 
 use App\Modules\AccessManagement\Providers\AccessManagementServiceProvider;
+use App\Modules\BackupRestore\Providers\BackupRestoreServiceProvider;
 use App\Modules\Products\Providers\ProductManagementServiceProvider;
+use App\Modules\Reporting\Providers\ReportingServiceProvider;
 use App\Modules\Taxes\Providers\TaxesDiscountsServiceProvider;
 use App\Providers\AppServiceProvider;
 use App\Providers\Filament\AdminPanelProvider;
@@ -12,4 +14,6 @@ return [
     AppServiceProvider::class,
     AdminPanelProvider::class,
     TaxesDiscountsServiceProvider::class,
+    ReportingServiceProvider::class,
+    BackupRestoreServiceProvider::class,
 ];

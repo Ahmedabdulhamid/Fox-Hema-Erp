@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesDeliveries\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Products\Filament\MasterDetail;
@@ -41,7 +42,18 @@ class SalesDeliveryInfolist
                             View::make('components.variant-summary')->viewData(fn ($record): array => ['variant' => data_get($record, 'salesOrderItem.variant')]),
                             TextEntry::make('quantity'),
                             TextEntry::make('stockMovement.display_reference'),
-                            MasterDetail::entry(fn (): array => self::lineDetails()),
+                            MasterDetail::entry(function (SalesDeliveryItem $record): array {
+                                $record->loadMissing(['salesOrder', 'reservationConsumption', 'stockMovement']);
+                                if (app(InventoryAccess::class)->allows(auth()->user(), InventoryPermissions::COST)) {
+                                    $record->loadMissing('stockMovement.inventoryCostEntry');
+                                }
+                                $fulfillment = RequestDisplayData::remember(
+                                    'sales-delivery.fulfillment.'.$record->sales_order_id,
+                                    fn (): array => app(SalesFulfillmentService::class)->quantities($record->salesOrder),
+                                )[$record->sales_order_item_id];
+
+                                return self::lineDetails($fulfillment);
+                            }),
                         ]),
             ]),
 
@@ -49,7 +61,8 @@ class SalesDeliveryInfolist
         ])->columns(1);
     }
 
-    private static function lineDetails(): array
+    /** @param array{ordered: string, delivered: string, remaining: string} $fulfillment */
+    private static function lineDetails(array $fulfillment): array
     {
         return [
             Section::make(__('Product'))->columns(['default' => 1, 'sm' => 2])->schema([
@@ -60,8 +73,8 @@ class SalesDeliveryInfolist
             ]),
             Section::make(__('Line details'))->columns(['default' => 1, 'sm' => 2])->schema([
                 TextEntry::make('ordered')->label(__('Ordered quantity'))->state(fn (SalesDeliveryItem $record): string => $record->salesOrderItem->quantity),
-                TextEntry::make('delivered')->label(__('Already delivered quantity'))->state(fn (SalesDeliveryItem $record): string => app(SalesFulfillmentService::class)->quantities($record->salesOrder)[$record->sales_order_item_id]['delivered']),
-                TextEntry::make('remaining')->label(__('Remaining quantity'))->state(fn (SalesDeliveryItem $record): string => app(SalesFulfillmentService::class)->quantities($record->salesOrder)[$record->sales_order_item_id]['remaining']),
+                TextEntry::make('delivered')->label(__('Already delivered quantity'))->state($fulfillment['delivered']),
+                TextEntry::make('remaining')->label(__('Remaining quantity'))->state($fulfillment['remaining']),
                 TextEntry::make('quantity')->label(__('Delivery quantity')),
                 TextEntry::make('stockMovement.display_reference')->label(__('Stock movement')),
                 TextEntry::make('reservationConsumption.quantity')->label(__('Consumed reservation quantity')),

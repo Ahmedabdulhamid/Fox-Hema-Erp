@@ -2,6 +2,7 @@
 
 namespace App\Modules\Inventory\Filament\Pages;
 
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryAdjustmentDrafts;
@@ -20,7 +21,6 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\Text;
 use Filament\Schemas\Components\Utilities\Get;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
@@ -101,7 +101,7 @@ class ProductInventory extends Page
             ->where('location_id', $this->location)->whereIn('variant_id', (clone $query)->select('id'))
             ->when($selected, fn ($q) => $q->where('variant_id', $selected->id))
             ->select(['id', 'variant_id', 'type', 'quantity', 'created_at'])->with('variant:id,sku')->latest()->limit(10)->get() : collect();
-        $sales = $this->showActivity && Schema::hasTable('sales_delivery_items') ? $service->sales(auth()->user())->where('location_id', $this->location)->whereIn('variant_id', (clone $query)->select('id'))
+        $sales = $this->showActivity && RequestAuthorizationFacts::tableExists('sales_delivery_items') ? $service->sales(auth()->user())->where('location_id', $this->location)->whereIn('variant_id', (clone $query)->select('id'))
             ->when($selected, fn ($q) => $q->where('variant_id', $selected->id))->orderByDesc('occurred_at')->limit(10)->get() : collect();
         $drafts = $this->showActivity && $this->canAdjust()
             ? DB::table('inventory_adjustment_drafts')->where('location_id', $this->location)->whereIn('variant_id', (clone $query)->select('id'))->latest()->limit(10)->get() : collect();

@@ -9,6 +9,7 @@ use App\Modules\Purchasing\Services\PurchaseOrderService;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Livewire\Attributes\Locked;
@@ -23,7 +24,7 @@ class EditPurchaseOrder extends EditRecord
     protected function mutateFormDataBeforeFill(array $data): array
     {
         $this->revision = app(PurchaseOrderService::class)->revision($this->record);
-        $data['items'] = $this->record->items()->with('variant.product')->orderBy('id')->get()->map(fn ($item): array => ['brand_id' => $item->variant->product?->brand_id, 'discount_id' => $item->commercial_snapshot['discount']['id'] ?? null, 'tax_ids' => array_column($item->commercial_snapshot['taxes'] ?? [], 'id')] + app(PurchaseOrderProductSelection::class)->formState($item->variant) + Arr::only($item->toArray(), ['id', 'variant_id', 'quantity', 'unit_price', 'notes']))->all();
+        $data['items'] = $this->formItems($this->record);
 
         return $data;
     }
@@ -33,9 +34,24 @@ class EditPurchaseOrder extends EditRecord
         $record = ProductMutation::run(fn () => app(PurchaseOrderService::class)->update(auth()->user(), $record, $data, $this->revision), 'data');
         $this->revision = app(PurchaseOrderService::class)->revision($record);
         $this->record = $record;
-        $this->data['items'] = $record->items->map(fn ($item): array => ['brand_id' => $item->variant->product?->brand_id, 'discount_id' => $item->commercial_snapshot['discount']['id'] ?? null, 'tax_ids' => array_column($item->commercial_snapshot['taxes'] ?? [], 'id')] + app(PurchaseOrderProductSelection::class)->formState($item->variant) + Arr::only($item->toArray(), ['id', 'variant_id', 'quantity', 'unit_price', 'notes']))->all();
+        $this->data['items'] = $this->formItems($record);
 
         return $record;
+    }
+
+    private function formItems(Model $record): array
+    {
+        $record->loadMissing('items.variant.product');
+        $products = new Collection($record->items->pluck('variant.product')->filter()->unique('id')->values()->all());
+        $products->loadExists(['variants as form_manages_sizes' => fn ($query) => $query
+            ->whereNotNull('size_id')->orWhereNotNull('unallocated_product_id')]);
+
+        return $record->items->sortBy('id')->map(fn ($item): array => [
+            'brand_id' => $item->variant->product?->brand_id,
+            'discount_id' => $item->commercial_snapshot['discount']['id'] ?? null,
+            'tax_ids' => array_column($item->commercial_snapshot['taxes'] ?? [], 'id'),
+        ] + app(PurchaseOrderProductSelection::class)->formState($item->variant)
+            + Arr::only($item->toArray(), ['id', 'variant_id', 'quantity', 'unit_price', 'notes']))->values()->all();
     }
 
     protected function getHeaderActions(): array

@@ -17,7 +17,6 @@ class SalesDeliveryActions
     public static function post(): Action
     {
         return Action::make('post')->label(__('Post Delivery'))->authorize('post')->color('success')->requiresConfirmation()
-            ->visible(fn (SalesDelivery $record): bool => auth()->user()?->can('post', $record) ?? false)
             ->modalDescription(__('Post this delivery, consume its owned reservations and record inventory COGS.'))
             ->schema([Hidden::make('revision')->default(fn (SalesDelivery $record): string => app(SalesDeliveryService::class)->revision($record))])
             ->action(function (SalesDelivery $record, array $data, Component $livewire, Action $action): void {
@@ -39,7 +38,6 @@ class SalesDeliveryActions
     public static function cancel(): Action
     {
         return Action::make('cancel')->label(__('Cancel delivery draft'))->authorize('cancel')->color('danger')->requiresConfirmation()
-            ->visible(fn (SalesDelivery $record): bool => auth()->user()?->can('cancel', $record) ?? false)
             ->modalDescription(__('Cancel this draft and retain its history. Stock and reservations remain unchanged.'))
             ->schema([Hidden::make('revision')->default(fn (SalesDelivery $record): string => app(SalesDeliveryService::class)->revision($record))])
             ->action(function (SalesDelivery $record, array $data, Component $livewire, Action $action): void {

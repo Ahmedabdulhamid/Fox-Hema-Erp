@@ -3,6 +3,7 @@
 namespace App\Modules\Inventory\Services;
 
 use App\Modules\AccessManagement\Models\User;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Models\Size;
@@ -13,7 +14,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class InventoryInsights
 {
@@ -61,7 +61,7 @@ class InventoryInsights
             ->selectRaw('variant_id, location_id, MIN(created_at) AS first_received_at')->groupBy('variant_id', 'location_id');
         $from = CarbonImmutable::parse($filters['from'] ?? today()->subDays(29)->toDateString())->startOfDay();
         $until = CarbonImmutable::parse($filters['until'] ?? today()->toDateString())->addDay()->startOfDay();
-        $events = Schema::hasTable('sales_delivery_items') ? $this->sales($actor) : DB::query()->selectRaw('NULL AS variant_id, NULL AS location_id, NULL AS occurred_at, 0 AS units, 0 AS is_sale')->whereRaw('1 = 0');
+        $events = RequestAuthorizationFacts::tableExists('sales_delivery_items') ? $this->sales($actor) : DB::query()->selectRaw('NULL AS variant_id, NULL AS location_id, NULL AS occurred_at, 0 AS units, 0 AS is_sale')->whereRaw('1 = 0');
         $events->when(filled($filters['location'] ?? null), fn (QueryBuilder $q) => $q->where('location_id', $filters['location']))
             ->when(filled($filters['product'] ?? null), fn (QueryBuilder $q) => $q->whereIn('variant_id', ProductVariant::where('product_id', $filters['product'])->select('id')));
         $sales = DB::query()->fromSub($events, 'events')->selectRaw('variant_id, location_id, MAX(CASE WHEN is_sale = 1 THEN occurred_at END) AS last_sale_at, SUM(CASE WHEN occurred_at >= ? AND occurred_at < ? THEN units ELSE 0 END) AS net_sold', [$from, $until])->groupBy('variant_id', 'location_id');
@@ -79,9 +79,9 @@ class InventoryInsights
             ->when(filled($filters['category'] ?? null), fn (Builder $q) => $q->whereHas('product', fn (Builder $p) => $p->where('category_id', $filters['category'])))
             ->when(filled($filters['search'] ?? null), fn (Builder $q) => $q->where(fn (Builder $q) => $q->where('product_variants.sku', 'like', '%'.$filters['search'].'%')->orWhere('product_variants.barcode', 'like', '%'.$filters['search'].'%')->orWhereHas('product', fn (Builder $p) => $p->where('name', 'like', '%'.$filters['search'].'%'))));
 
-        if ($access->allows($actor, InventoryPermissions::COST) && Schema::hasColumn('inventory_cost_states', 'location_id')) {
+        if ($access->allows($actor, InventoryPermissions::COST) && RequestAuthorizationFacts::columnExists('inventory_cost_states', 'location_id')) {
             $base->leftJoin('inventory_cost_states as valuation', fn (JoinClause $join) => $join->on('valuation.variant_id', '=', 'product_variants.id')->on('valuation.location_id', '=', 'inventory_location.id'))
-                ->selectRaw('CASE WHEN valuation.on_hand_qty = balance.quantity_on_hand THEN valuation.total_value ELSE NULL END AS reliable_stock_value');
+                ->selectRaw($this->valuationExpression().' AS reliable_stock_value');
         }
 
         return ProductVariant::query()->fromSub($base->toBase(), 'product_variants')->select('product_variants.*')
@@ -119,7 +119,7 @@ class InventoryInsights
     {
         return match ($status) {
             'out' => 'balance_id IS NOT NULL AND quantity_available = 0',
-            'low' => 'quantity_available > 0 AND reorder_threshold IS NOT NULL AND quantity_available <= reorder_threshold',
+            'low' => $this->lowStockCondition(),
             'best' => 'net_sold > 0',
             'dead' => 'quantity_available > 0 AND first_received_at IS NOT NULL AND balance_created_at IS NOT NULL AND '.$this->deadCondition(),
             'missing' => 'balance_id IS NULL',
@@ -127,6 +127,16 @@ class InventoryInsights
             'reserved' => 'quantity_reserved > 0', 'available' => 'quantity_available > 0', 'on_hand' => 'quantity_on_hand > 0',
             default => '1 = 1',
         };
+    }
+
+    public function lowStockCondition(): string
+    {
+        return 'quantity_available > 0 AND reorder_threshold IS NOT NULL AND quantity_available <= reorder_threshold';
+    }
+
+    public function valuationExpression(): string
+    {
+        return 'CASE WHEN valuation.on_hand_qty = balance.quantity_on_hand THEN valuation.total_value ELSE NULL END';
     }
 
     private function deadCondition(): string
@@ -192,7 +202,7 @@ class InventoryInsights
     {
         $locationId = (int) $variant->inventory_location_id;
         if (! app(InventoryAccess::class)->allows($actor, InventoryPermissions::COST, $locationId)
-            || ! Schema::hasColumn('inventory_cost_states', 'location_id')) {
+            || ! RequestAuthorizationFacts::columnExists('inventory_cost_states', 'location_id')) {
             return null;
         }
         $state = DB::table('inventory_cost_states')->where('variant_id', $variant->id)->where('location_id', $locationId)->first();

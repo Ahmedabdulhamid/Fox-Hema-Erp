@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Filament\ReadModelCache;
+use App\Filament\ReadModelCacheObserver;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\ModuleDiscovery;
 use App\Modules\AccessManagement\Services\ModuleMigrator;
@@ -15,6 +17,7 @@ use App\Modules\Inventory\Policies\StockBalancePolicy;
 use App\Modules\Inventory\Policies\StockMovementPolicy;
 use App\Modules\InventoryCosting\Services\SalesReturnValuationService;
 use App\Modules\InventoryCosting\Services\StockIssueValuationService;
+use App\Modules\InventoryCosting\Services\StockTransferValuationService;
 use App\Modules\Payments\Models\Customer;
 use App\Modules\Payments\Models\Payment;
 use App\Modules\Payments\Models\PaymentAllocation;
@@ -28,6 +31,14 @@ use App\Modules\Payments\Policies\PaymentAllocationPolicy;
 use App\Modules\Payments\Policies\PaymentMethodPolicy;
 use App\Modules\Payments\Policies\PaymentRefundPolicy;
 use App\Modules\Payments\Services\CustomerAccess;
+use App\Modules\POS\Models\PosCashMovement;
+use App\Modules\POS\Models\PosDevice;
+use App\Modules\POS\Models\PosDevicePaymentMethod;
+use App\Modules\POS\Models\PosSession;
+use App\Modules\POS\Models\PosSessionTender;
+use App\Modules\POS\Models\PosTransaction;
+use App\Modules\POS\Observers\PosDeviceObserver;
+use App\Modules\POS\Observers\PosReadModelObserver;
 use App\Modules\Products\Filament\VariantInventoryValuationPanel;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
@@ -40,6 +51,7 @@ use App\Modules\Purchasing\Policies\PurchaseReceiptPolicy;
 use App\Modules\Purchasing\Policies\SupplierPolicy;
 use App\Modules\Purchasing\Policies\VendorBillPolicy;
 use App\Modules\Purchasing\Policies\VendorPaymentPolicy;
+use App\Modules\Purchasing\Services\PurchaseReceiptService;
 use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesDelivery;
 use App\Modules\Sales\Models\SalesInvoice;
@@ -50,6 +62,8 @@ use App\Modules\Sales\Policies\SalesDeliveryPolicy;
 use App\Modules\Sales\Policies\SalesInvoicePolicy;
 use App\Modules\Sales\Policies\SalesOrderPolicy;
 use App\Modules\Sales\Policies\SalesReturnPolicy;
+use App\Modules\StockTransfer\Models\StockTransfer;
+use App\Modules\StockTransfer\Policies\StockTransferPolicy;
 use App\Modules\Treasury\Models\TreasuryAccount;
 use App\Modules\Treasury\Models\TreasuryOperation;
 use App\Modules\Treasury\Observers\TreasuryAccountObserver;
@@ -57,6 +71,7 @@ use App\Modules\Treasury\Observers\TreasuryOperationObserver;
 use App\Modules\Treasury\Policies\TreasuryAccountPolicy;
 use App\Modules\Treasury\Policies\TreasuryOperationPolicy;
 use Illuminate\Database\Migrations\Migrator;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
@@ -68,8 +83,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->scoped(ReadModelCache::class);
         $this->app->scoped(StockIssueValuationService::class);
+        $this->app->scoped(StockTransferValuationService::class);
         $this->app->scoped(SalesReturnValuationService::class);
+        $this->app->scoped(PurchaseReceiptService::class);
         $this->app->scoped(DocumentNumberService::class);
         $this->app->scoped(CustomerAccess::class);
         $this->app->extend('migrator', function (Migrator $migrator, $app): ModuleMigrator {
@@ -87,6 +105,22 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        PosDevice::observe(PosDeviceObserver::class);
+        foreach ([
+            PosDevice::class,
+            PosDevicePaymentMethod::class,
+            PosSession::class,
+            PosSessionTender::class,
+            PosCashMovement::class,
+            PosTransaction::class,
+        ] as $model) {
+            $model::observe(PosReadModelObserver::class);
+        }
+        foreach (config('read_cache.models', []) as $model) {
+            foreach (['saved', 'deleted', 'restored'] as $event) {
+                Event::listen('eloquent.'.$event.': '.$model, [ReadModelCacheObserver::class, $event]);
+            }
+        }
         foreach ([Customer::class, Payment::class, PaymentAllocation::class, PaymentRefund::class] as $model) {
             $model::observe(CustomerDocumentObserver::class);
         }
@@ -111,6 +145,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(StockBalance::class, StockBalancePolicy::class);
         Gate::policy(SizeAllocation::class, SizeAllocationPolicy::class);
         Gate::policy(StockMovement::class, StockMovementPolicy::class);
+        Gate::policy(StockTransfer::class, StockTransferPolicy::class);
         Gate::policy(Supplier::class, SupplierPolicy::class);
         Gate::policy(PurchaseOrder::class, PurchaseOrderPolicy::class);
         Gate::policy(PurchaseReceipt::class, PurchaseReceiptPolicy::class);

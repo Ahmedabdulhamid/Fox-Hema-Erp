@@ -5,7 +5,6 @@ namespace App\Modules\Inventory\Filament\Resources\SizeAllocations\Pages;
 use App\Modules\Inventory\Filament\Resources\SizeAllocations\SizeAllocationResource;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
-use App\Modules\Inventory\Services\SizeAllocationPresentation;
 use App\Modules\Inventory\Services\SizeAllocationService;
 use App\Modules\Products\Filament\ProductMutation;
 use Filament\Actions\Action;
@@ -28,7 +27,7 @@ class EditSizeAllocation extends EditRecord
 
     public function getSubheading(): ?string
     {
-        return __('Distribute received unallocated stock to existing size variants.');
+        return __('Distribute received unallocated stock across selected colors and sizes.');
     }
 
     public function getPageClasses(): array
@@ -87,10 +86,23 @@ class EditSizeAllocation extends EditRecord
     protected function mutateFormDataBeforeFill(array $data): array
     {
         $this->revision = app(SizeAllocationService::class)->revision($this->record);
-        $data['items'] = $this->record->items()->orderBy('variant_id')->get(['variant_id', 'quantity'])->toArray();
+        $items = $this->record->items()->with('variant')->orderBy('variant_id')->get()
+            ->map(fn ($item): array => [
+                'variant_id' => $item->variant_id,
+                'size_id' => $item->variant->size_id,
+                'color_id' => $item->variant->color_id,
+                'quantity' => $item->quantity,
+            ])->all();
         $data['brand_id'] = $this->record->product->brand_id ?? 'none';
-        $labels = collect(app(SizeAllocationPresentation::class)->grid(auth()->user(), $this->record->product_id, record: $this->record))->keyBy('variant_id');
-        $data['items'] = array_map(fn (array $item): array => $item + ($labels[$item['variant_id']] ?? []), $data['items']);
+        $data['allocation_colors'] = SizeAllocationResource::colorsFromGrid($items);
+        $data['allocation_sizes'] = SizeAllocationResource::sizesFromGrid($items);
+        $data['items'] = SizeAllocationResource::grid(
+            $this->record->product_id,
+            $data['allocation_colors'],
+            $data['allocation_sizes'],
+            $items,
+            $this->record,
+        );
 
         return $data;
     }

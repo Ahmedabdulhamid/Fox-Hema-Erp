@@ -36,7 +36,8 @@ class CustomerAllocations
             $link = CustomerInvoiceAccount::where('sales_invoice_id', $invoice->id)->lockForUpdate()->first();
             $matchesCustomer = $payment->customer_id !== null && $link !== null && (int) $link->customer_id === (int) $payment->customer_id;
             $matchesWalkIn = $payment->customer_id === null && $link === null && $payment->source_document_type === 'sales_invoice'
-                && $payment->source_document_reference === $invoice->uuid && $payment->treasury_account_id !== null;
+                && $payment->source_document_reference === $invoice->uuid
+                && ($payment->treasury_account_id !== null || ($payment->pos_session_id !== null && $payment->pos_transaction_id !== null));
             if ($payment->status !== 'posted' || (! $matchesCustomer && ! $matchesWalkIn) || (int) $payment->location_id !== (int) $invoice->location_id ||
             $invoice->status !== 'posted' || $invoice->cancelled_at !== null || $invoice->currency !== 'EGP') {
                 $access->invalid('invoice', 'Allocate only posted receipts to the same customer and branch posted invoice.');

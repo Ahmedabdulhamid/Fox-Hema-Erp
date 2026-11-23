@@ -46,9 +46,13 @@ use App\Modules\Products\Services\ProductsAccess;
 use App\Modules\Products\Services\ProductVariantManager;
 use App\Modules\Purchasing\Models\PurchaseOrderItem;
 use App\Modules\Purchasing\Models\VendorBillItem;
+use App\Modules\Sales\Models\SalesDelivery;
+use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesInvoiceItem;
 use App\Modules\Sales\Models\SalesOrderItem;
 use App\Modules\Sales\Models\SalesReturnItem;
+use App\Modules\Sales\Services\SalesOrderConfirmationService;
+use App\Modules\Sales\Services\SalesOrderService;
 use App\Modules\StockTransfer\Models\StockTransferItem;
 use App\Modules\Taxes\Models\Tax;
 use Filament\Actions\Testing\TestAction;
@@ -59,6 +63,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -493,6 +498,36 @@ class ProductsManagementTest extends TestCase
         } elseif ($table === 'stock_movements') {
             $location = Location::create(['name' => 'Reference branch', 'type' => 'branch', 'is_active' => true]);
             StockMovement::create(['variant_id' => $variant->id, 'location_id' => $location->id, 'type' => 'purchase', 'quantity' => '1.0000']);
+        } elseif ($table === 'sales_return_items') {
+            Module::whereIn('code', ['sales', 'inventory', 'inventory_costing'])->update(['is_active' => true]);
+            $product = $variant->product;
+            $product->forceFill(['status' => 'active', 'is_active' => true])->save();
+            $location = Location::create(['name' => 'Reference branch', 'type' => 'branch', 'is_active' => true]);
+            StockBalance::create([
+                'variant_id' => $variant->id,
+                'location_id' => $location->id,
+                'quantity_on_hand' => '10.0000',
+                'quantity_available' => '10.0000',
+            ]);
+            $order = app(SalesOrderService::class)->create($actor, [
+                'location_id' => $location->id,
+                'items' => [[
+                    'product_id' => $product->id,
+                    'variant_id' => $variant->id,
+                    'quantity' => '10.0000',
+                    'unit_price' => '5.0000',
+                    'discount_amount' => '0',
+                    'tax_amount' => '0',
+                ]],
+            ], (string) Str::uuid7());
+            $order = app(SalesOrderConfirmationService::class)->confirm($actor, $order);
+            $delivery = SalesDelivery::factory()->create(['sales_order_id' => $order->id]);
+            $deliveryItem = SalesDeliveryItem::factory()->create([
+                'sales_order_id' => $order->id,
+                'sales_order_item_id' => $order->items()->firstOrFail()->id,
+                'sales_delivery_id' => $delivery->id,
+            ]);
+            SalesReturnItem::factory()->create(['sales_delivery_item_id' => $deliveryItem->id]);
         } else {
             if ($table === 'inventory_size_allocation_items') {
                 $variant->update(['size_id' => Size::factory()->create()->id]);
@@ -555,7 +590,9 @@ class ProductsManagementTest extends TestCase
         $old = $second->path;
         $second = $manager->save($actor, $product, ['upload' => $this->upload()], $second);
         $manager->delete($actor, $product, $second);
-        // RefreshDatabase wraps tests in a transaction: process the durable tasks explicitly.
+        Storage::disk('public')->assertExists($old);
+        Storage::disk('public')->assertExists($second->path);
+        $this->travel(25)->hours();
         $this->artisan('products:cleanup-images')->assertSuccessful();
         Storage::disk('public')->assertMissing($old);
         Storage::disk('public')->assertMissing($second->path);
@@ -575,6 +612,7 @@ class ProductsManagementTest extends TestCase
         Storage::disk('public')->assertExists('products/shared.png');
         $legacy = ProductImage::factory()->create(['product_id' => $product->id, 'path' => 'legacy/image.png']);
         app(ProductImageManager::class)->delete($actor, $product, $legacy);
+        $this->travel(25)->hours();
         $this->artisan('products:cleanup-images')->assertFailed();
         $this->assertDatabaseHas('product_image_cleanup_tasks', ['path' => 'legacy/image.png']);
         $this->assertGreaterThanOrEqual(1, DB::table('product_image_cleanup_tasks')->where('path', 'legacy/image.png')->value('attempts'));
@@ -725,6 +763,8 @@ class ProductsManagementTest extends TestCase
         $old = $image->path;
         $component->callAction(TestAction::make('edit')->table($image), ['upload' => $this->upload(), 'alt_text' => 'Updated', 'sort_order' => 2, 'is_primary' => true])->assertHasNoFormErrors();
         $this->assertNotSame($old, $image->fresh()->path);
+        Storage::disk('public')->assertExists($old);
+        $this->travel(25)->hours();
         $this->artisan('products:cleanup-images')->assertSuccessful();
         Storage::disk('public')->assertMissing($old);
     }

@@ -5,13 +5,14 @@ namespace App\Models\Concerns;
 use App\Modules\AccessManagement\Models\DocumentNumber;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\DocumentPresentation;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 trait HasDocumentNumber
 {
     public function initializeHasDocumentNumber(): void
     {
-        if (app(DocumentNumberService::class)->installed()) {
+        if (app(DocumentNumberService::class)->installed() && ! RequestAuthorizationFacts::holdsRegistryLock()) {
             $this->with = array_values(array_unique([...$this->with, 'documentNumber']));
         }
     }

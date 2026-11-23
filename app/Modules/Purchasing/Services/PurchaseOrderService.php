@@ -201,7 +201,7 @@ class PurchaseOrderService
             }
             $variant->setRelation('product', $products->get($variant->product_id));
             $lines[$index] = ['variant_id' => (int) $line['variant_id'], 'notes' => $line['notes'] ?? null]
-                + app(PurchaseLinePricing::class)->line($variant, $line, 'items.'.$index.'.');
+                + app(PurchaseLinePricing::class)->line($variant, $line, 'items.'.$index.'.', (int) $validated['supplier_id']);
         }
 
         return [['supplier_id' => (int) $validated['supplier_id'], 'location_id' => (int) $validated['location_id'],

@@ -25,17 +25,31 @@ class CustomerTreasury
         $method = app(PaymentMethods::class)->resolve($methodId, $reference, $historicalMethod);
         $account = TreasuryAccount::whereKey($id)->lockForUpdate()->firstOrFail();
         app(TreasuryAccess::class)->operation($actor, $posting ? TreasuryPermissions::POST : TreasuryPermissions::CREATE, $account->location_id);
-        if (! $account->is_active || $account->currency !== 'EGP' || (int) $account->location_id !== $location ||
-        ! (($method->type === 'cash' && $account->type !== 'bank') || (in_array($method->type, ['bank_transfer', 'card'], true) && $account->type === 'bank'))) {
-            app(CustomerAccess::class)->invalid('treasury_account_id', 'Choose an active account in the customer branch matching the cash or bank method.');
+        $accountTypes = match ($method->type) {
+            'cash' => ['branch_cashbox', 'location_cashbox'],
+            'bank_transfer' => ['bank'],
+            'card' => ['bank', 'provider_settlement'],
+            'wallet', 'other' => ['provider_settlement'],
+            default => [],
+        };
+        if (! $account->is_active || $account->currency !== 'EGP' || (int) $account->location_id !== $location
+            || $account->ownership !== 'location' || ! in_array($account->type, $accountTypes, true)) {
+            app(CustomerAccess::class)->invalid('treasury_account_id', 'Choose an active account in the customer branch matching the payment method.');
         }
 
         return $account;
     }
 
-    public function receipt(Payment $payment): TreasuryOperation
+    public function receipt(Payment $payment): ?TreasuryOperation
     {
         $operation = TreasuryOperation::where('payment_id', $payment->id)->lockForUpdate()->first();
+        if ($payment->treasury_account_id === null
+            && $payment->pos_session_id !== null
+            && $payment->pos_transaction_id !== null
+            && $payment->paymentMethod?->type !== 'cash'
+            && $operation === null) {
+            return null;
+        }
         if ($operation === null || $operation->status !== 'posted' || $operation->type !== 'payment_receipt' ||
         (int) $operation->account_id !== (int) $payment->treasury_account_id || $operation->amount !== $payment->amount ||
         $operation->currency !== $payment->currency || $operation->reversal()->exists()) {

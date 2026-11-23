@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Pages;
 
+use App\Filament\ReadModelCache;
 use App\Modules\Sales\Services\ProfitabilityReport;
 use App\Modules\Sales\Services\SalesAccess;
 use Filament\Pages\Page;
@@ -63,7 +64,7 @@ class Profitability extends Page
         $service = app(ProfitabilityReport::class);
         $events = $service->events(auth()->user(), $this->from, $this->until, $this->locationId);
 
-        return ['summary' => $service->summary($events), 'rows' => $service->grouped($events, $this->group)->paginate(25)];
+        return ['summary' => $service->summary($events), 'rows' => app(ReadModelCache::class)->paginate('sales', $service->grouped($events, $this->group))];
     }
 
     #[Computed]

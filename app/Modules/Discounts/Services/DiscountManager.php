@@ -17,7 +17,8 @@ class DiscountManager extends DefinitionManager
 
     protected function defaults(): array
     {
-        return ['type' => 'percentage', 'scope' => 'product', 'usage' => 'sales', 'is_active' => true, 'is_stackable' => false];
+        return ['type' => 'percentage', 'scope' => 'product', 'usage' => 'sales', 'supplier_id' => null,
+            'is_active' => true, 'is_stackable' => false];
     }
 
     public function rules(array $data, ?Model $record = null): array
@@ -29,6 +30,9 @@ class DiscountManager extends DefinitionManager
             'value' => ['required', 'numeric', 'min:0', 'regex:/^\d{1,16}(\.\d{1,4})?$/', Rule::when(($data['type'] ?? null) === 'percentage', 'max:100')],
             'scope' => ['required', Rule::in(['product', 'order'])],
             'usage' => ['required', Rule::in(['sales', 'purchases', 'both'])],
+            'supplier_id' => Rule::when(in_array($data['usage'] ?? null, ['purchases', 'both'], true),
+                ['nullable', 'integer', Rule::exists('suppliers', 'id')->where('is_active', true)],
+                ['nullable', 'prohibited']),
             'is_active' => ['required', 'boolean'],
             'is_stackable' => ['required', 'boolean'],
             'starts_at' => ['nullable', 'date'],

@@ -12,6 +12,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class VendorBillResource extends Resource
 {
@@ -41,7 +42,7 @@ class VendorBillResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return app(PurchasingAccess::class)->scopeBills(parent::getEloquentQuery(), auth()->user())
-            ->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'purchaseOrder.location', 'items.variant.product']);
+            ->with(['items' => fn (HasMany $items): HasMany => $items->chaperone('vendorBill'), 'items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'purchaseOrder.location', 'items.variant.product']);
     }
 
     public static function form(Schema $schema): Schema

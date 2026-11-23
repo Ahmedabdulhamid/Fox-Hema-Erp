@@ -28,7 +28,7 @@ class CreateSizeAllocation extends CreateRecord
 
     public function getSubheading(): ?string
     {
-        return __('Distribute received unallocated stock to existing size variants.');
+        return __('Distribute received unallocated stock across selected colors and sizes.');
     }
 
     public function getPageClasses(): array
@@ -92,7 +92,15 @@ class CreateSizeAllocation extends CreateRecord
         if ($productId && $locationId) {
             $product = SizeAllocationResource::eligibleProducts()->whereKey($productId)->first();
             if ($product !== null && app(InventoryAccess::class)->allows(auth()->user(), InventoryPermissions::ALLOCATIONS_MANAGE, $locationId)) {
-                $this->form->fill(['brand_id' => $product->brand_id ?? 'none', 'product_id' => $productId, 'location_id' => $locationId, 'items' => SizeAllocationResource::grid($productId)]);
+                $items = SizeAllocationResource::grid($productId);
+                $this->form->fill([
+                    'brand_id' => $product->brand_id ?? 'none',
+                    'product_id' => $productId,
+                    'location_id' => $locationId,
+                    'allocation_colors' => SizeAllocationResource::colorsFromGrid($items),
+                    'allocation_sizes' => SizeAllocationResource::sizesFromGrid($items),
+                    'items' => $items,
+                ]);
             }
         }
     }

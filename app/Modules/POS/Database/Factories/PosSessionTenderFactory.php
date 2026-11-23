@@ -16,6 +16,7 @@ class PosSessionTenderFactory extends Factory
     {
         return [
             'pos_session_id' => PosSession::factory(),
+            'payment_method_id' => null,
             'method' => 'cash',
             'expected_amount' => '0.0000',
             'verified_amount' => null,

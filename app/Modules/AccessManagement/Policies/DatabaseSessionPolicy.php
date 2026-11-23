@@ -14,7 +14,7 @@ class DatabaseSessionPolicy
 
     public function view(User $user, DatabaseSession $session): bool
     {
-        return $user->isGlobalSuperAdmin() || $user->is($session->user) || ($user->can('sessions.view') && $session->user?->locations()->whereKey(getPermissionsTeamId())->exists());
+        return DatabaseSession::query()->visibleTo($user)->whereKey($session->id)->exists();
     }
 
     public function delete(User $user, DatabaseSession $session): bool

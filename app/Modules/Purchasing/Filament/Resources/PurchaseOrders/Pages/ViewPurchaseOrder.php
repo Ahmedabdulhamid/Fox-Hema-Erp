@@ -20,12 +20,22 @@ class ViewPurchaseOrder extends ViewRecord
 {
     protected static string $resource = PurchaseOrderResource::class;
 
+    public function mount(int|string $record): void
+    {
+        parent::mount($record);
+        if (app(PurchasingAccess::class)->allows(auth()->user(), PurchasingPermissions::RECEIPTS_VIEW, (int) $this->record->location_id)) {
+            $this->record->loadMissing('receipts');
+        }
+    }
+
     protected function getHeaderActions(): array
     {
         return [EditAction::make(), ...PurchaseOrdersTable::lifecycleActions(),
             Action::make('createBill')->label(__('Create Bill'))
                 ->visible(fn (): bool => Gate::allows('create', VendorBill::class)
-                    && $this->record->receipts()->where('status', 'posted')->exists())
+                    && ($this->record->relationLoaded('receipts')
+                        ? $this->record->receipts->contains(fn ($receipt): bool => $receipt->status === 'posted')
+                        : $this->record->receipts()->where('status', 'posted')->exists()))
                 ->url(fn (): string => VendorBillResource::getUrl('create', ['order' => $this->record->uuid])),
             Action::make('receipts')->label(__('Goods Receipts'))
                 ->visible(fn (): bool => app(PurchasingAccess::class)->allows(auth()->user(), PurchasingPermissions::RECEIPTS_VIEW, (int) $this->record->location_id))

@@ -13,13 +13,17 @@ use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\InventoryCosting\Services\SalesReturnValuationService;
 use App\Modules\InventoryCosting\Services\StockIssueValuationService;
+use App\Modules\InventoryCosting\Services\StockTransferValuationService;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
+use App\Modules\Purchasing\Services\PurchaseReceiptService;
 use App\Modules\Purchasing\Services\PurchasingAccess;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesReturnCostAllocation;
 use App\Modules\Sales\Models\SalesReturnItem;
+use App\Modules\StockTransfer\Models\StockTransferReceiptItem;
+use App\Modules\StockTransfer\Models\StockTransferShipmentItem;
 use Brick\Math\BigDecimal;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -161,6 +165,19 @@ class InventoryPostingService
 
     private function prepare(StockPostingCommand $command, User|SystemPostingContext $actor): array
     {
+        if ($command->reference instanceof PurchaseReceiptItem
+            && ($command->type !== StockMovementType::Purchase || $command->valuationUnitCost === null
+                || ! $actor instanceof User
+                || ! app(PurchaseReceiptService::class)->authorizesCommand($command, $actor))) {
+            $this->invalid('valuation', 'Receipt stock requires the authorized receipt valuation transaction.');
+        }
+        $stockTransfer = $command->reference instanceof StockTransferShipmentItem || $command->reference instanceof StockTransferReceiptItem;
+        if ($stockTransfer && (! $actor instanceof User
+            || ! app(StockTransferValuationService::class)->authorizesCommand($command, $actor)
+            || ($command->reference instanceof StockTransferShipmentItem && $command->type !== StockMovementType::TransferOut)
+            || ($command->reference instanceof StockTransferReceiptItem && $command->type !== StockMovementType::TransferIn))) {
+            $this->invalid('reference', 'Transfer movements require the authorized stock transfer workflow.');
+        }
         foreach ([$command->variant, $command->location, $command->reference, $command->reverses, $actor instanceof User ? $actor : null] as $model) {
             if ($model instanceof Model && (! $model->exists || $model->getConnection()->getName() !== DB::connection()->getName())) {
                 $this->invalid('reference', 'Posting models must be persisted on the default inventory connection.');
@@ -227,12 +244,16 @@ class InventoryPostingService
                     || ($number->isNegative() !== ((int) $command->variant->id === (int) $document->source_variant_id))) {
                     $this->invalid('valuation', 'The size allocation movement does not match its document.');
                 }
+            } elseif ($stockTransfer) {
+                if (! $actor instanceof User || ! DB::connection()->transactionLevel()) {
+                    $this->invalid('valuation', 'Transfer valuation requires its authorized transfer transaction.');
+                }
             } elseif ($command->type !== StockMovementType::Purchase
                 || ! $command->reference instanceof PurchaseReceiptItem
                 || ! $actor instanceof User || DB::connection()->transactionLevel() === 0) {
                 $this->invalid('valuation', 'Six-decimal receipt valuation requires the authorized receipt transaction.');
             }
-            if (! $allocation && ! $sale && ! $return) {
+            if (! $allocation && ! $sale && ! $return && ! $stockTransfer) {
                 app(PurchasingAccess::class)->authorize($actor,
                     PurchasingPermissions::RECEIPTS_VIEW, (int) $command->location->id);
                 app(PurchasingAccess::class)->authorize($actor,

@@ -2,13 +2,17 @@
 
 namespace App\Modules\Purchasing\Services;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Models\Supplier;
 use Brick\Math\BigDecimal;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -19,11 +23,52 @@ class SupplierFinancialOverview
     public function __construct(private readonly VendorPaymentAccess $access) {}
 
     /**
+     * Display snapshot only; settlement and allocation services retain authoritative reads.
+     *
+     * @return array{supplier: Supplier, locations: array<int, string>, totals: array<string, string>, statement: LengthAwarePaginator, opening: string, cutoff: string, bills: Collection, advances: Collection, recent_activity: Collection}
+     */
+    public function reportForDisplay(User $actor, int $supplierId, ?int $locationId = null, ?string $cutoff = null, ?string $from = null, int $page = 1, ?Supplier $supplierRecord = null): array
+    {
+        $cutoff ??= now()->toDateString();
+        Validator::make(compact('cutoff', 'from', 'page'), [
+            'cutoff' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'from' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:cutoff'],
+            'page' => ['integer', 'min:1', 'max:1000000'],
+        ])->validate();
+        if ($locationId !== null) {
+            $this->access->authorize($actor, PurchasingPermissions::PAYMENTS_VIEW, $locationId);
+        }
+        $scope = $this->access->scope(Location::query(), $actor, 'locations.id');
+        $supplier = $this->resolveSupplier($supplierId, $supplierRecord);
+        $data = app(ReadModelCache::class)->remember('purchasing', ['supplier-finance', $actor->id, $supplierId,
+            $locationId, $cutoff, $from, $page, $scope->toSql(), $scope->getBindings()], function () use ($actor, $supplierId, $locationId, $cutoff, $from, $page, $supplier): array {
+                $finance = $this->report($actor, $supplierId, $locationId, $cutoff, $from, $page, $supplier);
+                $finance['statement_total'] = $finance['statement']->total();
+                $finance['statement'] = array_map(fn ($row): array => (array) $row, $finance['statement']->items());
+                foreach (['bills', 'advances', 'recent_activity'] as $key) {
+                    $finance[$key] = $finance[$key]->map(fn ($row): array => (array) $row)->all();
+                }
+                unset($finance['supplier']);
+
+                return $finance;
+            }, config('read_cache.report_ttl'), lock: true);
+        $data['supplier'] = $supplier;
+        $data['statement'] = new LengthAwarePaginator(collect($data['statement'])->map(fn (array $row): object => (object) $row), $data['statement_total'], 25, $page,
+            ['path' => Paginator::resolveCurrentPath(), 'pageName' => 'statementPage']);
+        foreach (['bills', 'advances', 'recent_activity'] as $key) {
+            $data[$key] = collect($data[$key])->map(fn (array $row): object => (object) $row);
+        }
+        unset($data['statement_total']);
+
+        return $data;
+    }
+
+    /**
      * All financial pages and aggregates share a snapshot and inclusive recognition cutoff.
      *
      * @return array{supplier: Supplier, locations: array<int, string>, totals: array<string, string>, statement: LengthAwarePaginator, opening: string, cutoff: string, bills: Collection, advances: Collection, recent_activity: Collection}
      */
-    public function report(User $actor, int $supplierId, ?int $locationId = null, ?string $cutoff = null, ?string $from = null, int $page = 1): array
+    public function report(User $actor, int $supplierId, ?int $locationId = null, ?string $cutoff = null, ?string $from = null, int $page = 1, ?Supplier $supplierRecord = null): array
     {
         $cutoff ??= now()->toDateString();
         Validator::make(compact('cutoff', 'from', 'page'), [
@@ -36,11 +81,11 @@ class SupplierFinancialOverview
             $this->access->authorize($actor, PurchasingPermissions::PAYMENTS_VIEW, $locationId);
         }
         $locations = $this->access->scope(Location::query(), $actor, 'locations.id')->orderBy('name')->pluck('name', 'id')->all();
-        $supplier = Supplier::findOrFail($supplierId);
+        $supplier = $this->resolveSupplier($supplierId, $supplierRecord);
         $orders = PurchaseOrder::whereIn('location_id', array_keys($locations))
             ->when($locationId !== null, fn ($query) => $query->where('location_id', $locationId))->select('id');
 
-        return DB::transaction(function () use ($supplier, $supplierId, $orders, $locations, $locationId, $cutoff, $from, $page): array {
+        return RequestAuthorizationFacts::duringReadTransaction(fn (): array => DB::transaction(function () use ($supplier, $supplierId, $orders, $locations, $locationId, $cutoff, $from, $page): array {
             $end = $cutoff.' 23:59:59';
             $bills = DB::table('vendor_bills as b')->join('purchase_orders as o', 'o.id', '=', 'b.purchase_order_id')
                 ->where('b.supplier_id', $supplierId)->whereIn('o.id', $orders)
@@ -68,6 +113,7 @@ class SupplierFinancialOverview
             if (($billTotals->minimum !== null && BigDecimal::of($billTotals->minimum)->isNegative()) || ($paymentTotals->minimum !== null && BigDecimal::of($paymentTotals->minimum)->isNegative())) {
                 $this->unreconciled();
             }
+
             $totals = [];
             foreach (['billed', 'allocated', 'gross_open_invoices', 'overdue'] as $key) {
                 $totals[$key] = $this->decimal($billTotals->{$key});
@@ -89,7 +135,17 @@ class SupplierFinancialOverview
                 'bills' => DB::query()->fromSub($billAmounts, 'b')->orderBy('outstanding', 'desc')->orderByDesc('id')->limit(25)->get(),
                 'advances' => DB::query()->fromSub($paymentAmounts, 'p')->where('unallocated', '>', 0)->orderByDesc('id')->limit(25)->get(),
             ];
-        });
+        }));
+    }
+
+    private function resolveSupplier(int $supplierId, ?Supplier $supplierRecord): Supplier
+    {
+        $supplier = $supplierRecord ?? RequestDisplayData::remember('supplier-finance.supplier.'.$supplierId,
+            fn (): Supplier => Supplier::findOrFail($supplierId));
+
+        abort_unless((int) $supplier->getKey() === $supplierId, 404);
+
+        return $supplier;
     }
 
     /** Financial movements plus zero-value allocation audit activity. */

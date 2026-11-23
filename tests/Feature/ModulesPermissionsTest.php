@@ -21,9 +21,14 @@ use App\Modules\AccessManagement\Services\RoleAccessManager;
 use App\Modules\AccessManagement\Services\SuperAdminProvisioner;
 use App\Modules\AccessManagement\Services\UserAccessManager;
 use App\Modules\Inventory\Services\InventoryPermissions;
+use App\Modules\Payments\Services\PaymentsPermissions;
+use App\Modules\POS\Services\PosAccess;
+use App\Modules\POS\Services\PosPermissions;
 use App\Modules\Products\Services\ProductPermissions;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Sales\Services\SalesPermissions;
+use App\Modules\StockTransfer\Services\StockTransferPermissions;
+use App\Modules\Treasury\Services\TreasuryPermissions;
 use Filament\Facades\Filament;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -102,8 +107,11 @@ class ModulesPermissionsTest extends TestCase
         $this->assertEqualsCanonicalizing(InventoryPermissions::all(), Module::where('code', 'inventory')->firstOrFail()->permissions->pluck('name')->all());
         $this->assertEqualsCanonicalizing(PurchasingPermissions::all(), Module::where('code', 'purchasing')->firstOrFail()->permissions->pluck('name')->all());
         $this->assertEqualsCanonicalizing(SalesPermissions::all(), Module::where('code', 'sales')->firstOrFail()->permissions->pluck('name')->all());
-        $this->assertSame(0, Module::whereNotIn('code', ['access_management', 'products', 'taxes', 'discounts', 'inventory', 'purchasing', 'sales'])->get()->sum(fn (Module $module) => $module->permissions()->count()));
-        $this->assertSame(10, Module::where('is_active', false)->count());
+        $this->assertEqualsCanonicalizing(PaymentsPermissions::all(), Module::where('code', 'payments')->firstOrFail()->permissions->pluck('name')->all());
+        $this->assertEqualsCanonicalizing(TreasuryPermissions::all(), Module::where('code', 'treasury')->firstOrFail()->permissions->pluck('name')->all());
+        $this->assertEqualsCanonicalizing(StockTransferPermissions::all(), Module::where('code', 'stock_transfers')->firstOrFail()->permissions->pluck('name')->all());
+        $this->assertSame(0, Module::whereNotIn('code', ['access_management', 'products', 'taxes', 'discounts', 'inventory', 'purchasing', 'sales', 'payments', 'treasury', 'stock_transfers'])->get()->sum(fn (Module $module) => $module->permissions()->count()));
+        $this->assertSame(count(ModuleRegistry::MODULES) - 1, Module::where('is_active', false)->count());
     }
 
     public function test_registration_restores_location_context_and_maps_future_real_permissions(): void
@@ -131,6 +139,22 @@ class ModulesPermissionsTest extends TestCase
         $this->assertFalse(ModuleResource::canDelete($module));
     }
 
+    public function test_module_pages_render_when_a_name_matches_a_translation_group(): void
+    {
+        $this->admin();
+        $module = Module::where('code', 'access_management')->firstOrFail();
+        $module->update(['name' => 'auth']);
+        $module->refresh();
+
+        foreach ([
+            '/admin/modules',
+            '/admin/modules/'.$module->getRouteKey(),
+            '/admin/modules/'.$module->getRouteKey().'/edit',
+        ] as $url) {
+            $this->get($url)->assertOk();
+        }
+    }
+
     public function test_direct_urls_and_navigation_require_permissions(): void
     {
         [$user] = $this->scoped(['users.view']);
@@ -155,6 +179,27 @@ class ModulesPermissionsTest extends TestCase
         $this->assertFalse(ModuleResource::canViewAny());
         app(LocationContext::class)->setFor($user, $first->id);
         $this->assertTrue(ModuleResource::canViewAny());
+    }
+
+    public function test_global_admin_defaults_to_a_branch_and_can_open_pos_pages(): void
+    {
+        $admin = $this->admin();
+        $branch = Location::create(['name' => 'POS Branch', 'type' => 'branch', 'is_active' => true]);
+        $secondBranch = Location::create(['name' => 'Second POS Branch', 'type' => 'branch', 'is_active' => true]);
+        Module::where('code', 'pos')->firstOrFail()->update(['is_active' => true]);
+
+        $this->assertSame($branch->id, app(LocationContext::class)->initializeFor($admin));
+        $this->assertSame(
+            [$branch->id, $secondBranch->id],
+            app(PosAccess::class)->branchIds($admin, PosPermissions::DEVICES_MANAGE),
+        );
+        $this->get('/admin/pos-devices')->assertOk();
+        $this->get('/admin/pos-device-payment-methods')->assertOk();
+        $this->get('/admin/pos-sessions')->assertOk();
+
+        app(LocationContext::class)->setFor($admin, null);
+        $this->assertNull(app(LocationContext::class)->initializeFor($admin));
+        $this->assertSame('global', session()->get(LocationContext::SESSION_KEY));
     }
 
     public function test_module_settings_save_and_access_management_cannot_be_disabled(): void

@@ -77,6 +77,7 @@ class InventoryCostEntry extends Model
         'purchase_unit_cost',
         'purchase_value',
         'purchase_price_variance',
+        'purchase_commercial_snapshot',
         'standard_cost_revision_id',
     ];
 
@@ -94,6 +95,7 @@ class InventoryCostEntry extends Model
             'purchase_unit_cost' => 'decimal:6',
             'purchase_value' => 'decimal:4',
             'purchase_price_variance' => 'decimal:4',
+            'purchase_commercial_snapshot' => 'array',
         ];
     }
 
@@ -112,6 +114,8 @@ class InventoryCostEntry extends Model
         $guard = function (self $entry): void {
             if ($entry->getOriginal('purchase_value') !== null
                 || self::whereKey($entry->id)->whereNotNull('purchase_value')->exists()
+                || $entry->getOriginal('purchase_commercial_snapshot') !== null
+                || self::whereKey($entry->id)->whereNotNull('purchase_commercial_snapshot')->exists()
                 || $entry->stockMovement?->reference_type === SizeAllocationItem::class) {
                 throw ValidationException::withMessages(['valuation' => __('Posted receipt valuations are immutable.')]);
             }

@@ -59,6 +59,15 @@ class UserCreateOptionsTest extends TestCase
         $this->assertFalse($user->isGlobalSuperAdmin());
     }
 
+    public function test_create_user_permission_matrix_renders_the_reporting_group_translation(): void
+    {
+        $this->assertSame('Reporting', __('Reporting', [], 'en'));
+        $this->assertSame('التقارير', __('Reporting', [], 'ar'));
+
+        Livewire::test(CreateUser::class)
+            ->assertFormFieldExists('permission_ids', fn ($field): bool => $field instanceof ViewField);
+    }
+
     public function test_role_options_use_the_current_location_and_preserve_existing_selections(): void
     {
         $location = Location::create(['name' => 'Main', 'type' => 'branch', 'is_active' => true]);

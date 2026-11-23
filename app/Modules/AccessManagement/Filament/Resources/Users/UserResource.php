@@ -10,6 +10,7 @@ use App\Modules\AccessManagement\Filament\Resources\Users\RelationManagers\Locat
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Role;
 use App\Modules\AccessManagement\Models\User;
+use App\Modules\AccessManagement\Services\LocationContext;
 use App\Modules\AccessManagement\Services\PermissionGroups;
 use App\Modules\AccessManagement\Services\RoleAccessManager;
 use App\Modules\AccessManagement\Services\UserAccessManager;
@@ -43,6 +44,7 @@ use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Filters\TrashedFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -220,7 +222,7 @@ class UserResource extends Resource
     public static function table(Table $table): Table
     {
         return $table->columns([TextColumn::make('name')->label(__('Name'))->searchable()->sortable(), TextColumn::make('email')->label(__('Email'))->searchable(), IconColumn::make('is_active')->label(__('Active'))->boolean(), TextColumn::make('locations.name')->label(__('Locations'))->badge(), TextColumn::make('roles.name')->badge()->label(__('Current roles')), TextColumn::make('last_login_at')->label(__('Last login'))->dateTime()->sortable()])
-            ->filters([TrashedFilter::make(), TernaryFilter::make('is_active')->label(__('Active')), SelectFilter::make('locations')->label(__('Locations'))->relationship('locations', 'name'), SelectFilter::make('roles')->label(__('Roles'))->relationship('roles', 'name')])
+            ->filters([TrashedFilter::make(), TernaryFilter::make('is_active')->label(__('Active')), SelectFilter::make('locations')->label(__('Locations'))->relationship('locations', 'name', fn (Builder $query): Builder => app(LocationContext::class)->scopeLocationQuery($query, auth()->user(), 'users.view')), SelectFilter::make('roles')->label(__('Roles'))->relationship('roles', 'name')])
             ->recordActions([ViewAction::make(), EditAction::make(), DeleteAction::make(), RestoreAction::make(), ForceDeleteAction::make()])
             ->toolbarActions([
                 BulkActionGroup::make([
@@ -238,8 +240,13 @@ class UserResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery()->with(['locations', 'roles']);
         $actor = auth()->user();
+        $query = parent::getEloquentQuery()->with([
+            'locations' => fn (BelongsToMany $locations): BelongsToMany => $actor->isGlobalSuperAdmin()
+                ? $locations
+                : $locations->whereIn('locations.id', $actor->locations()->select('locations.id')),
+            'roles',
+        ]);
 
         return $actor?->isGlobalSuperAdmin() ? $query : $query->whereHas('locations', fn (Builder $q) => $q->whereKey(getPermissionsTeamId()));
     }

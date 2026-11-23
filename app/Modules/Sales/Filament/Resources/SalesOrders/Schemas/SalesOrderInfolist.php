@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Sales\Filament\Resources\SalesOrders\Tables\SalesOrdersTable;
 use App\Modules\Sales\Models\SalesOrder;
@@ -14,6 +15,7 @@ use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Collection;
 
 class SalesOrderInfolist
 {
@@ -57,7 +59,7 @@ class SalesOrderInfolist
             ]),
             Section::make(__('Stock reservations'))->schema([
                 RepeatableEntry::make('reservations')->label(__('Reservation history'))
-                    ->state(fn (SalesOrder $record) => $record->reservations()->with(['variant.product.images', 'variant.product.brand', 'variant.images', 'variant.size', 'variant.color'])->orderBy('variant_id')->get())
+                    ->state(fn (SalesOrder $record) => self::reservations($record))
                     ->columns(4)->schema([
                         TextEntry::make('variant_label')->label(__('Product'))->state(fn (SalesStockReservation $record): string => $record->variant->displayName())->formatStateUsing(fn ($record) => view('components.commercial-product-cell', ['variant' => $record->variant]))->columnSpanFull(),
                         TextEntry::make('quantity_reserved')->label(__('Originally reserved')),
@@ -67,6 +69,25 @@ class SalesOrderInfolist
                     ]),
             ]),
         ])->columns(1);
+    }
+
+    private static function reservations(SalesOrder $order): Collection
+    {
+        return RequestDisplayData::remember('sales-order.reservations.'.$order->id, function () use ($order): Collection {
+            $reservations = $order->reservations()->orderBy('variant_id')->get();
+            if ($order->relationLoaded('items')) {
+                $variants = $order->getRelation('items')->filter(fn ($item): bool => $item->relationLoaded('variant'))
+                    ->mapWithKeys(fn ($item): array => [$item->variant_id => $item->getRelation('variant')]);
+                foreach ($reservations as $reservation) {
+                    if ($variants->has($reservation->variant_id)) {
+                        $reservation->setRelation('variant', $variants->get($reservation->variant_id));
+                    }
+                }
+            }
+            $reservations->loadMissing(['variant.product.images', 'variant.product.brand', 'variant.images', 'variant.size', 'variant.color']);
+
+            return $reservations;
+        });
     }
 
     private static function profitability(SalesOrder $order): array

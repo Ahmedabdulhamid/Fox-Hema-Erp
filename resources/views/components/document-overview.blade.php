@@ -1,5 +1,9 @@
 @php
-    $document = app(\App\Modules\AccessManagement\Services\DocumentPresentation::class)->overview($getRecord(), auth()->user());
+    $record = $getRecord();
+    $document = \App\Filament\RequestDisplayData::remember(
+        'document-overview.'.get_class($record).'.'.$record->getKey().'.'.app()->getLocale(),
+        fn (): array => app(\App\Modules\AccessManagement\Services\DocumentPresentation::class)->overview($record, auth()->user()),
+    );
 @endphp
 <section class="erp-document-overview" dir="{{ app()->getLocale() === 'ar' ? 'rtl' : 'ltr' }}" aria-label="{{ $document['type'] }}">
     <div class="erp-document-heading">

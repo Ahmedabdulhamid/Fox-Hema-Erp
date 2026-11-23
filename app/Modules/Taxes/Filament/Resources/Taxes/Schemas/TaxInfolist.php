@@ -27,12 +27,18 @@ class TaxInfolist
         if ($tax) {
             $fields = [...$fields,
                 TextEntry::make('price_inclusion')->label(__('Price inclusion'))->formatStateUsing(fn (string $state): string => __($state === 'included' ? 'Included' : 'Excluded')),
+                TextEntry::make('purchase_treatment')->label(__('Purchase tax treatment'))->formatStateUsing(fn (?string $state): string => match ($state) {
+                    'recoverable' => __('Recoverable; exclude from inventory cost'),
+                    'capitalizable' => __('Non-recoverable; include in inventory cost'),
+                    default => __('Not configured'),
+                }),
                 TextEntry::make('effective_from')->label(__('Effective from'))->date()->placeholder(__('Not recorded')),
                 TextEntry::make('effective_to')->label(__('Effective to'))->date()->placeholder(__('Not recorded')),
             ];
         } else {
             $fields = [...$fields,
                 TextEntry::make('scope')->label(__('Scope'))->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
+                TextEntry::make('supplier.name')->label(__('Supplier restriction'))->placeholder(__('All suppliers')),
                 IconEntry::make('is_stackable')->label(__('Stackable'))->boolean(),
                 TextEntry::make('starts_at')->label(__('Starts at'))->dateTime()->placeholder(__('Not recorded')),
                 TextEntry::make('ends_at')->label(__('Ends at'))->dateTime()->placeholder(__('Not recorded')),

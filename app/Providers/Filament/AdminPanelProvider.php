@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Http\Middleware\BeginAuthorizationRequest;
+use App\Http\Middleware\BindPosOfflineContext;
 use App\Http\Middleware\SetLocale;
 use App\Models\NumericFormatter;
 use App\Modules\AccessManagement\Filament\Pages\Auth\Login;
@@ -13,6 +14,7 @@ use App\Modules\AccessManagement\Http\Middleware\ResetLocationPermissionContext;
 use App\Modules\AccessManagement\Http\Middleware\SetLocationPermissionContext;
 use App\Modules\Inventory\Filament\Pages\InventoryOverview;
 use App\Modules\Inventory\Filament\Pages\ProductInventory;
+use App\Modules\POS\Filament\Pages\PosTerminal;
 use App\Modules\Sales\Filament\Pages\Profitability;
 use App\Modules\Treasury\Filament\Pages\TreasuryDashboard;
 use App\Modules\Treasury\Filament\Pages\TreasuryHistory;
@@ -124,6 +126,10 @@ class AdminPanelProvider extends PanelProvider
                 for: 'App\Modules\Inventory\Filament\Resources',
             )
             ->discoverResources(
+                in: app_path('Modules/StockTransfer/Filament/Resources'),
+                for: 'App\Modules\StockTransfer\Filament\Resources',
+            )
+            ->discoverResources(
                 in: app_path('Modules/Discounts/Filament/Resources'),
                 for: 'App\Modules\Discounts\Filament\Resources',
             )
@@ -142,11 +148,15 @@ class AdminPanelProvider extends PanelProvider
                 Profitability::class,
                 InventoryOverview::class,
                 ProductInventory::class,
+                PosTerminal::class,
             ])
             ->discoverResources(in: app_path('Modules/Treasury/Filament/Resources'), for: 'App\Modules\Treasury\Filament\Resources')
             ->discoverResources(in: app_path('Modules/Payments/Filament/Resources'), for: 'App\Modules\Payments\Filament\Resources')
             ->discoverPages(in: app_path('Modules/Payments/Filament/Pages'), for: 'App\Modules\Payments\Filament\Pages')
+            ->discoverPages(in: app_path('Modules/Reporting/Filament/Pages'), for: 'App\Modules\Reporting\Filament\Pages')
+            ->discoverResources(in: app_path('Modules/POS/Filament/Resources'), for: 'App\Modules\POS\Filament\Resources')
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
+            ->discoverPages(in: app_path('Modules/BackupRestore/Filament/Pages'), for: 'App\Modules\BackupRestore\Filament\Pages')
             ->widgets([
             ])
             ->middleware([
@@ -154,6 +164,7 @@ class AdminPanelProvider extends PanelProvider
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
+                BindPosOfflineContext::class,
                 ResetLocationPermissionContext::class,
                 SetLocale::class,
                 AuthenticateSession::class,

@@ -6,6 +6,7 @@ use App\Models\Concerns\HasPublicUuid;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\POS\Database\Factories\PosSessionFactory;
+use App\Modules\Treasury\Models\TreasuryAccount;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -19,6 +20,12 @@ class PosSession extends Model
     use HasPublicUuid;
 
     protected $fillable = [
+        'cash_treasury_account_id',
+        'currency',
+        'opening_key',
+        'opening_payload_hash',
+        'closing_key',
+        'closing_payload_hash',
         'session_number',
         'pos_device_id',
         'location_id',
@@ -55,6 +62,23 @@ class PosSession extends Model
             'cash_difference' => 'decimal:4',
             'closing_approved_at' => 'datetime',
         ];
+    }
+
+    public function getDisplayCodeAttribute(): string
+    {
+        if (! preg_match('/^POS-[A-F0-9]{32}$/iD', (string) $this->session_number)) {
+            return (string) $this->session_number;
+        }
+
+        $locationCode = $this->getRelationValue('location')?->code;
+        $prefix = filled($locationCode) ? $locationCode.'-' : '';
+
+        return $prefix.'SH-'.str_pad((string) $this->getKey(), 6, '0', STR_PAD_LEFT);
+    }
+
+    public function cashTreasuryAccount(): BelongsTo
+    {
+        return $this->belongsTo(TreasuryAccount::class, 'cash_treasury_account_id');
     }
 
     public function posDevice(): BelongsTo

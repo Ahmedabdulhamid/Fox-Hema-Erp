@@ -44,10 +44,16 @@ class TaxesTable
         if ($tax) {
             $columns = [...$columns,
                 TextColumn::make('price_inclusion')->label(__('Price inclusion'))->formatStateUsing(fn (string $state): string => __($state === 'included' ? 'Included' : 'Excluded'))->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('purchase_treatment')->label(__('Purchase tax treatment'))->formatStateUsing(fn (?string $state): string => match ($state) {
+                    'recoverable' => __('Recoverable; exclude from inventory cost'),
+                    'capitalizable' => __('Non-recoverable; include in inventory cost'),
+                    default => __('Not configured'),
+                })->toggleable(isToggledHiddenByDefault: true),
             ];
         } else {
             $columns = [...$columns,
                 TextColumn::make('scope')->toggleable(isToggledHiddenByDefault: true)->label(__('Scope'))->formatStateUsing(fn (string $state): string => __(ucfirst($state))),
+                TextColumn::make('supplier.name')->label(__('Supplier restriction'))->placeholder(__('All suppliers'))->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_stackable')->label(__('Stackable'))->boolean()->toggleable(isToggledHiddenByDefault: true),
             ];
         }

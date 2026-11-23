@@ -2,6 +2,8 @@
 
 namespace App\Modules\Purchasing\Services;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\Purchasing\Models\VendorBill;
 use App\Modules\Purchasing\Models\VendorPayment;
@@ -28,6 +30,26 @@ class SupplierFinancialBalances
         }, 3);
     }
 
+    /** Read-only rendering; mutations continue to use bill() and allocation services.
+     * @return array{paid: string, outstanding: string}
+     */
+    public function billForDisplay(User $actor, VendorBill $bill): array
+    {
+        if (! $bill->relationLoaded('purchaseOrder')) {
+            $bill = RequestDisplayData::remember('supplier.bill-display-record.'.$bill->id,
+                fn (): VendorBill => VendorBill::without('documentNumber')->with(['purchaseOrder' => fn ($query) => $query->without('documentNumber')])->findOrFail($bill->id));
+        }
+        $order = $bill->purchaseOrder;
+        if ($order === null || (int) $order->supplier_id !== (int) $bill->supplier_id) {
+            $this->payments->invalid('bill', 'Bill ownership requires explicit reconciliation.');
+        }
+        $this->access->authorize($actor, PurchasingPermissions::PAYMENTS_VIEW, (int) $order->location_id);
+
+        return RequestDisplayData::remember('supplier.bill-display-amounts.'.$bill->id,
+            fn (): array => app(ReadModelCache::class)->remember('purchasing', ['bill-display-amounts', $actor->id, $bill->id, $order->location_id],
+                fn (): array => $this->billAmounts($bill), config('read_cache.report_ttl'), $bill->getConnection()));
+    }
+
     /** @return array{allocated: string, unallocated: string} */
     public function payment(User $actor, VendorPayment $payment): array
     {
@@ -48,11 +70,12 @@ class SupplierFinancialBalances
      */
     public function paymentForDisplay(User $actor, VendorPayment $payment): array
     {
-        $payment = VendorPayment::findOrFail($payment->id);
         $this->payments->managed($payment);
         $this->access->authorize($actor, PurchasingPermissions::PAYMENTS_VIEW, (int) $payment->location_id);
 
-        return $this->paymentAmounts($payment);
+        return RequestDisplayData::remember('supplier.payment-display-amounts.'.$payment->id,
+            fn (): array => app(ReadModelCache::class)->remember('purchasing', ['payment-display-amounts', $actor->id, $payment->id, $payment->location_id],
+                fn (): array => $this->paymentAmounts($payment), config('read_cache.report_ttl'), $payment->getConnection()));
     }
 
     /**
@@ -117,11 +140,19 @@ class SupplierFinancialBalances
             return ['allocated' => '0.0000', 'unallocated' => '0.0000'];
         }
         $allocated = BigDecimal::zero();
-        foreach ($payment->allocations()->whereNull('released_at')->with('vendorBill.purchaseOrder')->get() as $allocation) {
-            $bill = $allocation->vendorBill;
-            if ($bill->status !== 'posted' || $bill->purchaseOrder === null
-                || (int) $bill->purchaseOrder->location_id !== (int) $payment->location_id
-                || (int) $bill->supplier_id !== (int) $payment->supplier_id) {
+        $allocations = $payment->allocations()->whereNull('released_at')
+            ->leftJoin('vendor_bills as allocation_bills', 'allocation_bills.id', '=', 'vendor_payment_allocations.vendor_bill_id')
+            ->leftJoin('purchase_orders as allocation_orders', 'allocation_orders.id', '=', 'allocation_bills.purchase_order_id')
+            ->get([
+                'vendor_payment_allocations.*',
+                'allocation_bills.status as allocation_bill_status',
+                'allocation_bills.supplier_id as allocation_bill_supplier_id',
+                'allocation_orders.location_id as allocation_order_location_id',
+            ]);
+        foreach ($allocations as $allocation) {
+            if ($allocation->allocation_bill_status !== 'posted' || $allocation->allocation_order_location_id === null
+                || (int) $allocation->allocation_order_location_id !== (int) $payment->location_id
+                || (int) $allocation->allocation_bill_supplier_id !== (int) $payment->supplier_id) {
                 $this->payments->invalid('allocation', 'Existing allocation evidence requires reconciliation.');
             }
             $allocated = $allocated->plus($allocation->amount);

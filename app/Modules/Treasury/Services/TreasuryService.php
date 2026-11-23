@@ -16,6 +16,11 @@ use App\Modules\Payments\Services\PaymentFingerprint;
 use App\Modules\Payments\Services\PaymentMoney;
 use App\Modules\Payments\Services\PaymentsAccess;
 use App\Modules\Payments\Services\PaymentsPermissions;
+use App\Modules\POS\Models\PosCashMovement;
+use App\Modules\POS\Models\PosSession;
+use App\Modules\POS\Services\PosAccess;
+use App\Modules\POS\Services\PosCashMovementService;
+use App\Modules\POS\Services\PosCheckoutService;
 use App\Modules\Purchasing\Models\VendorPayment;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Purchasing\Services\VendorPaymentAccess;
@@ -162,6 +167,10 @@ class TreasuryService
             if ($operation->status !== 'draft' || $operation->cancelled_at !== null || $operation->entries()->exists()) {
                 $this->invalid('operation', 'Only an unposted controlled draft may be posted.');
             }
+            if ($operation->reversal_of_id !== null) {
+                $this->assertNotPosCashMovement((int) $operation->reversal_of_id);
+            }
+            $this->assertShiftAwarePosting($operation, $accounts);
             $this->validateAccountTypes($payload, $accounts);
             $entries = $this->plannedEntries($operation);
             foreach ($entries as $entry) {
@@ -229,6 +238,7 @@ class TreasuryService
         return DB::transaction(function () use ($actor, $operation, $operationKey, $reason): TreasuryOperation {
             $this->lockRegistry();
             $original = TreasuryOperation::whereKey($operation->id)->lockForUpdate()->firstOrFail();
+            $this->assertNotPosCashMovement((int) $original->id);
             if (app(CustomerAccess::class)->ready()
                 && (($original->payment_id !== null && Payment::whereKey($original->payment_id)->where(fn ($query) => $query->whereNotNull('customer_id')->orWhereNotNull('treasury_account_id'))->exists())
                 || (PaymentRefund::where('treasury_operation_id', $original->id)->exists() && ! CustomerRefunds::isRecovering()))) {
@@ -277,6 +287,13 @@ class TreasuryService
     public function balance(User $actor, TreasuryAccount $account): string
     {
         $account = TreasuryAccount::findOrFail($account->id);
+        $this->access->operation($actor, TreasuryPermissions::BALANCES, $account->location_id);
+
+        return (string) $this->ledgerBalance((int) $account->id, false);
+    }
+
+    public function balanceForDisplay(User $actor, TreasuryAccount $account): string
+    {
         $this->access->operation($actor, TreasuryPermissions::BALANCES, $account->location_id);
 
         return (string) $this->ledgerBalance((int) $account->id, false);
@@ -383,13 +400,15 @@ class TreasuryService
     /** @param array<string, mixed> $data */
     private function validateAccountTypes(array $data, Collection $accounts): void
     {
-        $bank = $accounts->find($data['account_id'])->type === 'bank';
+        $accountType = $accounts->find($data['account_id'])->type;
+        $bankLike = in_array($accountType, ['bank', 'provider_settlement'], true);
+        $cashbox = in_array($accountType, ['branch_cashbox', 'central_cashbox', 'location_cashbox'], true);
         if (($data['type'] === 'transfer') !== ($data['destination_account_id'] !== null) && $data['type'] !== 'reversal') {
             $this->invalid('destination_account_id', 'Only transfers have a distinct destination account.');
         }
-        if ((str_starts_with($data['type'], 'bank_') && ! $bank)
-            || (str_starts_with($data['type'], 'cash_') && $bank)) {
-            $this->invalid('type', 'Movement type must match the cashbox or bank account.');
+        if ((str_starts_with($data['type'], 'bank_') && ! $bankLike)
+            || (str_starts_with($data['type'], 'cash_') && ! $cashbox)) {
+            $this->invalid('type', 'Movement type must match the cashbox, bank, or settlement account.');
         }
     }
 
@@ -435,16 +454,86 @@ class TreasuryService
         return $balance;
     }
 
+    private function assertNotPosCashMovement(int $operationId): void
+    {
+        if (PosCashMovement::query()->where('treasury_operation_id', $operationId)->exists()) {
+            $this->invalid('reversal', __('pos.validation.cash_movement_reversal_forbidden'));
+        }
+    }
+
+    /** @param Collection<int, TreasuryAccount> $accounts */
+    private function assertShiftAwarePosting(TreasuryOperation $operation, Collection $accounts): void
+    {
+        $latePayment = $operation->payment_id === null ? null : Payment::findOrFail($operation->payment_id);
+        if (CustomerPayments::isPosting() && $latePayment?->pos_session_id !== null
+            && PosCheckoutService::isPostingLate((int) $latePayment->pos_session_id)
+            && $operation->destination_account_id === null && $operation->reversal_of_id === null) {
+            return;
+        }
+        $sessions = PosSession::query()
+            ->whereIn('cash_treasury_account_id', $accounts->modelKeys())
+            ->whereIn('status', ['open', 'closing'])
+            ->orderBy('id')->lockForUpdate()->get();
+
+        foreach ($sessions as $session) {
+            if ($session->status === 'open' && $session->closing_started_at === null && $session->closed_at === null
+                && $operation->destination_account_id === null && $operation->reversal_of_id === null
+                && (int) $operation->account_id === (int) $session->cash_treasury_account_id) {
+                $payment = $operation->payment_id === null ? null : Payment::findOrFail($operation->payment_id);
+                if (CustomerPayments::isPosting() && $payment !== null
+                    && (int) $payment->pos_session_id === (int) $session->id) {
+                    continue;
+                }
+
+                $refund = PaymentRefund::query()
+                    ->where('pos_session_id', $session->id)
+                    ->where('treasury_account_id', $session->cash_treasury_account_id)
+                    ->where('idempotency_key', $operation->idempotency_key)
+                    ->where('amount', $operation->amount)
+                    ->where('created_by', $operation->created_by)
+                    ->where('status', 'draft')
+                    ->first();
+                if ($refund !== null && CustomerRefunds::isPostingPosRefund((int) $refund->id)
+                    && $operation->payment_id === null && $operation->type === 'cash_withdrawal'
+                    && $operation->currency === 'EGP' && $operation->source_type === 'external_other'
+                    && $operation->source_reference === 'customer-refund:'.$refund->uuid) {
+                    continue;
+                }
+
+                $movement = PosCashMovement::query()
+                    ->where('pos_session_id', $session->id)
+                    ->where('idempotency_key', $operation->idempotency_key)
+                    ->where('amount', $operation->amount)
+                    ->where('created_by', $operation->created_by)
+                    ->first();
+                if ($movement !== null && PosCashMovementService::isPosting((int) $movement->id)
+                    && $operation->source_type === 'external_other'
+                    && $operation->source_reference === 'pos-cash-movement:'.$movement->uuid
+                    && $operation->type === ($movement->direction === 'in' ? 'cash_deposit' : 'cash_withdrawal')) {
+                    continue;
+                }
+            }
+
+            $this->invalid('account', __('pos.validation.drawer_requires_shift_workflow'));
+        }
+    }
+
     private function validatePayment(User $actor, Payment $payment, int $accountId, string $amount, string $currency): void
     {
         $reference = PostedPaymentReference::fromPayment($payment);
         app(PaymentsAccess::class)->authorize($actor, PaymentsPermissions::VIEW, $reference->locationId);
         $account = TreasuryAccount::findOrFail($accountId);
-        if ($payment->pos_session_id !== null || $payment->pos_transaction_id !== null || $reference->reversalOfId !== null
+        if ($payment->pos_session_id !== null || $payment->pos_transaction_id !== null) {
+            if (! CustomerPayments::isPosting()) {
+                $this->invalid('payment', 'POS receipts require the authorized customer payment workflow.');
+            }
+            app(PosAccess::class)->payment($actor, $payment);
+        }
+        if ($reference->reversalOfId !== null
             || Payment::where('reversal_of_id', $payment->id)->lockForUpdate()->first() !== null
             || $account->location_id !== $reference->locationId || $account->currency !== $currency
             || $reference->currency !== $currency || $reference->amount !== $amount) {
-            $this->invalid('payment', 'Payment must be original, posted, unreversed, and match the account location, amount, and currency; POS adoption is forbidden.');
+            $this->invalid('payment', 'Payment must be original, posted, unreversed, and match the account location, amount, and currency.');
         }
     }
 

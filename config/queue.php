@@ -44,6 +44,33 @@ return [
             'after_commit' => false,
         ],
 
+        'products_database' => [
+            'driver' => 'database',
+            'connection' => null,
+            'table' => 'jobs',
+            'queue' => 'products',
+            'retry_after' => 180,
+            'after_commit' => true,
+        ],
+
+        'product_exports_database' => [
+            'driver' => 'database',
+            'connection' => null,
+            'table' => 'jobs',
+            'queue' => 'product-exports',
+            'retry_after' => 960,
+            'after_commit' => true,
+        ],
+
+        'backup_database' => [
+            'driver' => 'database',
+            'connection' => null,
+            'table' => 'jobs',
+            'queue' => 'backups',
+            'retry_after' => 900,
+            'after_commit' => true,
+        ],
+
         'beanstalkd' => [
             'driver' => 'beanstalkd',
             'host' => env('BEANSTALKD_QUEUE_HOST', 'localhost'),

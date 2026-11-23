@@ -22,18 +22,10 @@ class ViewVendorPayment extends ViewRecord
 {
     protected static string $resource = VendorPaymentResource::class;
 
-    /** @var array{allocated: string, unallocated: string}|null */
-    protected ?array $paymentDisplayAmounts = null;
-
     /** @return array{allocated: string, unallocated: string} */
     protected function getPaymentDisplayAmounts(): array
     {
-        $balances = app(SupplierFinancialBalances::class);
-        if (! request()->isMethod('GET')) {
-            return $balances->payment(auth()->user(), $this->record);
-        }
-
-        return $this->paymentDisplayAmounts ??= $balances->paymentForDisplay(auth()->user(), $this->record);
+        return app(SupplierFinancialBalances::class)->paymentForDisplay(auth()->user(), $this->record);
     }
 
     public function infolist(Schema $schema): Schema

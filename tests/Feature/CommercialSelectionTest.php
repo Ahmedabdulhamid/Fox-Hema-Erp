@@ -121,6 +121,30 @@ class CommercialSelectionTest extends TestCase
         $this->assertSame('100.0000', StockBalance::first()->quantity_on_hand);
     }
 
+    public function test_fixed_purchase_adjustments_remain_blocked_at_purchase_order_confirmation(): void
+    {
+        $tax = Tax::factory()->create(['type' => 'fixed', 'usage' => 'purchases', 'rate' => '5.0000']);
+        $discount = Discount::factory()->create(['type' => 'fixed', 'usage' => 'purchases', 'value' => '10.0000']);
+        $service = app(PurchaseOrderService::class);
+        $order = $service->create($this->actor, $this->input(['tax_ids' => [$tax->id], 'discount_id' => $discount->id], true), (string) Str::uuid7());
+
+        $this->assertSame('25.3704', $order->total_amount);
+        $this->assertSame('10.0000', $order->items->first()->discount_amount);
+        $this->assertSame('5.0000', $order->items->first()->tax_amount);
+
+        try {
+            $service->confirm($this->actor, $order, $service->revision($order));
+            $this->fail('Fixed purchase adjustments must not be posted before receipt costing and bill integration.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('items.0.tax_ids', $exception->errors());
+            $this->assertArrayHasKey('items.0.discount_id', $exception->errors());
+        }
+
+        $this->assertSame('draft', $order->fresh()->status);
+        $this->assertSame(0, $order->receipts()->count());
+        $this->assertSame(0, StockMovement::count());
+    }
+
     public function test_wrong_side_inactive_expired_and_order_definitions_cannot_be_selected(): void
     {
         foreach ([['usage' => 'purchases'], ['is_active' => false], ['effective_to' => now()->subDay()->toDateString()]] as $attributes) {
@@ -150,7 +174,7 @@ class CommercialSelectionTest extends TestCase
             foreach (['taxes', 'discounts'] as $kind) {
                 $data = ['name' => $usage.' '.$kind, 'code' => strtoupper($usage.'-'.$kind), 'usage' => $usage, 'type' => 'percentage',
                     'is_active' => true, 'price_inclusion' => 'excluded', 'scope' => 'product', 'is_stackable' => false,
-                    'rate' => $usage === 'sales' ? '14' : '0', 'value' => $usage === 'sales' ? '10' : '0'];
+                    'rate' => '14', 'value' => '10'];
                 $id = $definitions->create($this->actor, $kind, $usage, $data);
                 $this->assertTrue($definitions->eligible($kind, $usage)->whereKey($id)->exists());
                 try {
@@ -164,10 +188,11 @@ class CommercialSelectionTest extends TestCase
         $this->assertSame(2, Discount::count());
         $this->assertSame(2, Tax::count());
         try {
-            $definitions->create($this->actor, 'taxes', 'purchases', ['name' => 'Unsafe', 'code' => 'UNSAFE', 'usage' => 'purchases', 'type' => 'percentage', 'is_active' => true, 'price_inclusion' => 'excluded', 'rate' => '14']);
-            $this->fail('Undefined inventory treatment accepted.');
+            $definitions->create($this->actor, 'taxes', 'purchases', ['name' => 'Wrong usage', 'code' => 'WRONGUSAGE', 'usage' => 'sales',
+                'type' => 'percentage', 'is_active' => true, 'price_inclusion' => 'excluded', 'rate' => '14']);
+            $this->fail('A definition with mismatched usage was accepted.');
         } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('rate', $exception->errors());
+            $this->assertArrayHasKey('type', $exception->errors());
         }
         $unauthorized = User::factory()->create(['is_active' => true]);
         try {
@@ -177,6 +202,45 @@ class CommercialSelectionTest extends TestCase
             $this->assertNotNull($exception);
         }
         $this->assertSame(2, Tax::count());
+    }
+
+    public function test_inline_creation_supports_fixed_definitions_for_sales_and_purchases(): void
+    {
+        $definitions = app(CommercialDefinitions::class);
+        foreach (['taxes' => 'rate', 'discounts' => 'value'] as $kind => $amount) {
+            $salesData = ['name' => 'Fixed sales '.$kind, 'code' => 'FIXED-SALES-'.strtoupper($kind), 'usage' => 'sales',
+                'type' => 'fixed', 'is_active' => true, 'price_inclusion' => 'excluded', 'scope' => 'product',
+                'is_stackable' => false, $amount => '5.0000'];
+            $id = $definitions->create($this->actor, $kind, 'sales', $salesData);
+            $this->assertTrue($definitions->eligible($kind, 'sales')->whereKey($id)->exists());
+
+            $purchaseData = [...$salesData, 'name' => 'Fixed purchase '.$kind,
+                'code' => 'FIXED-PURCHASE-'.strtoupper($kind), 'usage' => 'purchases', $amount => '0.0000'];
+            $purchaseData[$amount] = '5.0000';
+            $purchaseId = $definitions->create($this->actor, $kind, 'purchases', $purchaseData);
+            $this->assertTrue($definitions->eligible($kind, 'purchases')->whereKey($purchaseId)->exists());
+        }
+    }
+
+    public function test_inline_purchase_creation_rejects_expired_or_future_definitions(): void
+    {
+        $definitions = app(CommercialDefinitions::class);
+        foreach ([
+            ['kind' => 'taxes', 'amount' => 'rate', 'dates' => ['effective_from' => now()->addDay()->toDateString()]],
+            ['kind' => 'discounts', 'amount' => 'value', 'dates' => ['starts_at' => now()->addSecond()->toDateTimeString()]],
+        ] as $definition) {
+            try {
+                $data = ['name' => 'Not yet effective '.$definition['kind'],
+                    'code' => 'FUTURE-'.strtoupper($definition['kind']), 'usage' => 'purchases',
+                    'type' => 'fixed', 'is_active' => true, 'price_inclusion' => 'excluded',
+                    'scope' => 'product', 'is_stackable' => false, $definition['amount'] => '5.0000']
+                    + $definition['dates'];
+                $definitions->create($this->actor, $definition['kind'], 'purchases', $data);
+                $this->fail('An ineligible definition was accepted.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('is_active', $exception->errors());
+            }
+        }
     }
 
     public function test_brand_filtering_resets_dependencies_without_clearing_edit_hydration(): void
@@ -202,14 +266,31 @@ class CommercialSelectionTest extends TestCase
     {
         foreach ([CreateSalesOrder::class => 'sales', CreatePurchaseOrder::class => 'purchases'] as $page => $usage) {
             $component = Livewire::test($page)->assertSuccessful()->assertSee(__('Brand'))->assertSee(__('Discount'))->assertSee(__('Taxes'));
+            if ($usage === 'purchases') {
+                $component->fillForm(['supplier_id' => $this->supplier->id]);
+            }
             $key = array_key_first($component->get('data.items'));
             foreach (['taxes' => 'tax_ids', 'discounts' => 'discount_id'] as $kind => $field) {
-                $data = ['name' => 'Inline '.$usage.' '.$kind, 'code' => strtoupper('INLINE-'.$usage.'-'.$kind), 'rate' => '0', 'value' => '0'];
+                $type = 'fixed';
+                $value = '5.0000';
+                $data = ['name' => 'Inline '.$usage.' '.$kind, 'code' => strtoupper('INLINE-'.$usage.'-'.$kind),
+                    'type' => $type, 'rate' => $value, 'value' => $value];
+                if ($kind === 'taxes' && $usage === 'purchases') {
+                    $data['purchase_treatment'] = 'recoverable';
+                }
                 $component->callAction(TestAction::make('createOption')->schemaComponent('items.'.$key.'.'.$field), $data)->assertHasNoFormErrors();
                 $selected = $component->get('data.items.'.$key.'.'.$field);
-                $id = ($kind === 'taxes' ? Tax::query() : Discount::query())->where('code', $data['code'])->value('id');
+                $id = ($kind === 'taxes' ? Tax::query() : Discount::query())->where('name', $data['name'])->value('id');
                 $this->assertNotNull($id);
                 $this->assertContains((string) $id, array_map('strval', (array) $selected));
+                if ($kind === 'taxes' && $usage === 'purchases') {
+                    $this->assertSame('recoverable', Tax::query()->whereKey($id)->value('purchase_treatment'));
+                    $this->assertSame('purchases', Tax::query()->whereKey($id)->value('usage'));
+                }
+                if ($kind === 'discounts' && $usage === 'purchases') {
+                    $this->assertSame($this->supplier->id, Discount::query()->whereKey($id)->value('supplier_id'));
+                    $this->assertSame('purchases', Discount::query()->whereKey($id)->value('usage'));
+                }
             }
         }
     }

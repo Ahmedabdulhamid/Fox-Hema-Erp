@@ -5,6 +5,7 @@ namespace App\Modules\POS\Models;
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\POS\Database\Factories\PosCashMovementFactory;
+use App\Modules\Treasury\Models\TreasuryOperation;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -18,6 +19,9 @@ class PosCashMovement extends Model
     use HasPublicUuid;
 
     protected $fillable = [
+        'idempotency_key',
+        'payload_fingerprint',
+        'treasury_operation_id',
         'reference_number',
         'pos_session_id',
         'movement_type',
@@ -68,5 +72,10 @@ class PosCashMovement extends Model
     public function corrections(): HasMany
     {
         return $this->hasMany(PosCashMovement::class, 'corrects_movement_id');
+    }
+
+    public function treasuryOperation(): BelongsTo
+    {
+        return $this->belongsTo(TreasuryOperation::class, 'treasury_operation_id');
     }
 }

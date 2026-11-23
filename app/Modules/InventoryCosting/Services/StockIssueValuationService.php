@@ -22,6 +22,7 @@ use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesReturnCostAllocation;
 use App\Modules\Sales\Services\SalesAccess;
 use App\Modules\Sales\Services\SalesPermissions;
+use App\Modules\StockTransfer\Models\StockTransferReceiptItem;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Carbon\CarbonInterface;
@@ -266,6 +267,10 @@ class StockIssueValuationService
     /** Immutable receipt lineage; remaining quantities are deliberately excluded from replay evidence. */
     public function receiptProvenance(FifoLayer $layer): array
     {
+        if ($layer->source_layer_id === null
+            && $layer->stockMovement->reference_type === (new StockTransferReceiptItem)->getMorphClass()) {
+            return $this->transferReceiptProvenance($layer);
+        }
         $root = $layer;
         $visited = [];
         $lineage = [];
@@ -293,6 +298,55 @@ class StockIssueValuationService
         $lineage[] = $root->only(['id', 'uuid', 'variant_id', 'stock_movement_id', 'quantity', 'unit_cost', 'received_at', 'source_layer_id']);
 
         return [$lineage, $receipt->only(['id', 'receipt_number', 'posted_at'])];
+    }
+
+    private function transferReceiptProvenance(FifoLayer $layer): array
+    {
+        $movement = $layer->stockMovement;
+        $receiptItem = StockTransferReceiptItem::query()->with(['stockTransferReceipt', 'stockTransferShipmentItem.stockTransfer'])
+            ->whereKey($movement->reference_id)->first();
+        $receipt = $receiptItem?->stockTransferReceipt;
+        $shipmentItem = $receiptItem?->stockTransferShipmentItem;
+        $sourceMovement = $shipmentItem === null ? null : StockMovement::query()
+            ->where('reference_type', $shipmentItem->getMorphClass())->where('reference_id', $shipmentItem->id)
+            ->where('type', StockMovementType::TransferOut->value)->first();
+        $sourceEntry = $sourceMovement?->inventoryCostEntry;
+        $entry = $movement->inventoryCostEntry;
+        $parts = $sourceEntry === null ? collect() : FifoLayerConsumption::query()->where('cost_entry_id', $sourceEntry->id)->get();
+        $partQuantity = $parts->reduce(
+            fn (BigDecimal $total, FifoLayerConsumption $part): BigDecimal => $total->plus($part->quantity),
+            BigDecimal::zero(),
+        );
+        $partValue = $parts->reduce(
+            fn (BigDecimal $total, FifoLayerConsumption $part): BigDecimal => $total->plus($part->total_cost),
+            BigDecimal::zero(),
+        );
+
+        if ($receipt === null || $receipt->status !== 'posted' || $receipt->posted_at === null
+            || ! $layer->received_at->equalTo($receipt->posted_at) || ! $layer->available_at?->equalTo($receipt->posted_at)
+            || $layer->initial_value === null || $layer->remaining_value === null
+            || $movement->type !== StockMovementType::TransferIn || $movement->quantity !== $layer->quantity
+            || (int) $movement->variant_id !== (int) $layer->variant_id
+            || (int) $sourceMovement?->variant_id !== (int) $layer->variant_id
+            || (int) $movement->location_id !== (int) $receiptItem?->stockTransferReceipt?->stockTransfer?->to_location_id
+            || $receiptItem?->received_quantity !== $layer->quantity
+            || $entry?->method !== 'fifo' || $entry->entry_type !== 'receipt'
+            || $entry->total_cost !== $layer->initial_value || $entry->quantity !== $layer->quantity
+            || $sourceEntry?->method !== 'fifo' || $sourceEntry->entry_type !== 'issue'
+            || $sourceEntry->quantity !== $sourceMovement?->quantity
+            || ! $partQuantity->isEqualTo(BigDecimal::of($sourceMovement?->quantity ?? '0')->abs())
+            || ! $partValue->isEqualTo(BigDecimal::of($sourceEntry->total_cost)->abs())
+            || (int) $sourceMovement?->location_id !== (int) $shipmentItem?->stockTransfer?->from_location_id
+            || (int) $shipmentItem?->stockTransfer?->to_location_id !== (int) $receiptItem?->stockTransferReceipt?->stockTransfer?->to_location_id) {
+            $this->invalid('Transfer receipt FIFO provenance requires reconciliation.');
+        }
+        app(InventoryPostingService::class)->verifyRecordedPayload($movement);
+        app(InventoryPostingService::class)->verifyRecordedPayload($sourceMovement);
+
+        return [
+            [$layer->only(['id', 'uuid', 'variant_id', 'stock_movement_id', 'quantity', 'unit_cost', 'received_at', 'source_layer_id', 'initial_value', 'remaining_value', 'available_at'])],
+            $receipt->only(['id', 'receipt_number', 'posted_at']),
+        ];
     }
 
     private function returnLayerProvenance(FifoLayer $layer, FifoLayer $parent): array

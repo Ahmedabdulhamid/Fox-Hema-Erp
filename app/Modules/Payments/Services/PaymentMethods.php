@@ -18,7 +18,7 @@ class PaymentMethods
         if ($method === null || (! $allowInactive && ! $method->is_active) || ! in_array($method->type, PaymentMethod::TYPES, true)) {
             throw ValidationException::withMessages(['payment_method_id' => __('payment_methods.validation.active')]);
         }
-        if ($method->requires_reference && trim($reference ?? '') === '') {
+        if ($method->type !== 'cash' && $method->requires_reference && trim($reference ?? '') === '') {
             throw ValidationException::withMessages(['external_reference' => __('payment_methods.validation.reference')]);
         }
 
@@ -38,7 +38,10 @@ class PaymentMethods
             if (array_diff(array_keys($data), $allowed) !== []) {
                 throw ValidationException::withMessages(['method' => __('payment_methods.validation.protected')]);
             }
-            $values = array_replace(['is_active' => true, 'requires_reference' => false, 'available_in_pos' => false, 'sort_order' => 0], $method->exists ? $method->only($allowed) : [], $data);
+            $values = array_replace(['is_active' => true, 'requires_reference' => false, 'available_in_pos' => true, 'sort_order' => 0], $method->exists ? $method->only($allowed) : [], $data);
+            if ($values['type'] === 'cash') {
+                $values['requires_reference'] = false;
+            }
             $validated = Validator::make($values, [
                 'name' => ['required', 'string', 'max:150'], 'type' => ['required', Rule::in(PaymentMethod::TYPES)],
                 'is_active' => ['required', 'boolean'], 'requires_reference' => ['required', 'boolean'], 'available_in_pos' => ['required', 'boolean'],

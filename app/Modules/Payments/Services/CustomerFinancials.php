@@ -2,6 +2,7 @@
 
 namespace App\Modules\Payments\Services;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\Payments\Models\Customer;
 use App\Modules\Payments\Models\CustomerInvoiceAccount;
@@ -20,6 +21,7 @@ class CustomerFinancials
 {
     public function available(Payment $payment, ?User $actor = null, bool $locking = false): string
     {
+        $payment = Payment::query()->when($locking, fn ($query) => $query->lockForUpdate())->findOrFail($payment->getKey());
         app(CustomerAccess::class)->operation($actor ?? auth()->user(), PaymentsPermissions::VIEW, (int) $payment->location_id);
         if ($payment->status !== 'posted') {
             return '0.0000';
@@ -41,6 +43,20 @@ class CustomerFinancials
         return $this->invoiceBalance($invoice, $credits, $paid);
     }
 
+    public function invoiceForDisplay(User $actor, SalesInvoice $invoice): array
+    {
+        app(CustomerAccess::class)->operation($actor, PaymentsPermissions::VIEW, (int) $invoice->location_id);
+        app(SalesAccess::class)->authorize($actor, SalesPermissions::INVOICES_VIEW, (int) $invoice->location_id);
+
+        return RequestDisplayData::remember('customer.invoice-display-summary.'.$invoice->getKey(), function () use ($invoice): array {
+            $credits = (string) $invoice->creditNotes()->where('status', 'posted')->whereNull('cancelled_at')->sum('total_amount');
+            $paid = (string) PaymentAllocation::where('sales_invoice_id', $invoice->id)
+                ->whereNull('released_at')->whereHas('payment', fn ($query) => $query->where('status', 'posted'))->sum('amount');
+
+            return $this->invoiceBalance($invoice, $credits, $paid);
+        });
+    }
+
     /** @return array{total: string, credited: string, paid: string, outstanding: string, excess_allocation: string, payment_status: string} */
     private function invoiceBalance(SalesInvoice $invoice, string $credits, string $paid): array
     {
@@ -54,6 +70,7 @@ class CustomerFinancials
 
     public function customer(User $actor, Customer $customer): array
     {
+        $customer = Customer::query()->findOrFail($customer->getKey());
         app(CustomerAccess::class)->operation($actor, PaymentsPermissions::VIEW, (int) $customer->location_id);
         $outstanding = BigDecimal::of('0.0000');
         $advance = BigDecimal::of('0.0000');

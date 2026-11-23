@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\BeginAuthorizationRequest;
 use App\Modules\AccessManagement\Database\Seeders\AccessManagementSeeder;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Module;
@@ -28,12 +29,15 @@ use App\Modules\Sales\Services\SalesOrderService;
 use App\Modules\Sales\Services\SalesPermissions;
 use App\Modules\Sales\Services\SalesProductSelection;
 use Brick\Math\BigDecimal;
+use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
@@ -156,6 +160,83 @@ class SalesOrderManagementTest extends TestCase
         foreach (['sales_deliveries', 'sales_invoices', 'payments', 'sales_returns'] as $table) {
             $this->assertSame(0, DB::table($table)->count());
         }
+    }
+
+    public function test_sales_order_row_query_count_stays_bounded_for_5_20_and_100_orders(): void
+    {
+        $queryCounts = [];
+        $queryTemplates = [];
+        $visibleRowCounts = [];
+        $gateChecks = [];
+        $capturing = false;
+        $capturedQueries = [];
+        $currentGateChecks = 0;
+
+        DB::listen(static function (QueryExecuted $query) use (&$capturing, &$capturedQueries): void {
+            if ($capturing) {
+                $capturedQueries[] = $query->sql;
+            }
+        });
+        Gate::after(static function (mixed $user, string $ability, ?bool $result, array $arguments) use (&$capturing, &$currentGateChecks): void {
+            if ($capturing) {
+                $currentGateChecks++;
+            }
+        });
+        $previousCount = 0;
+        foreach ([5, 20, 100] as $targetCount) {
+            SalesOrder::factory()->count($targetCount - $previousCount)->create([
+                'location_id' => $this->branch->id,
+                'created_by' => $this->actor->id,
+            ]);
+            $previousCount = $targetCount;
+
+            $capturedQueries = [];
+            $currentGateChecks = 0;
+            try {
+                $capturing = true;
+                $response = $this->get('/admin/sales-orders');
+            } finally {
+                $capturing = false;
+            }
+            $response->assertOk();
+            $visibleRowCounts[$targetCount] = substr_count($response->getContent(), 'fi-ta-row');
+            $queryCounts[$targetCount] = count($capturedQueries);
+            $frequencies = array_count_values($capturedQueries);
+            arsort($frequencies);
+            $queryTemplates[$targetCount] = array_slice($frequencies, 0, 10, true);
+            $gateChecks[$targetCount] = $currentGateChecks;
+        }
+
+        $diagnostics = json_encode([
+            'counts' => $queryCounts,
+            'visible_rows' => $visibleRowCounts,
+            'top_100_sql' => $queryTemplates[100],
+        ], JSON_THROW_ON_ERROR);
+        $this->assertSame([5 => 5, 20 => 20, 100 => 25], $visibleRowCounts, $diagnostics);
+        $this->assertLessThanOrEqual(35, max($queryCounts), $diagnostics);
+        $this->assertLessThanOrEqual($queryCounts[5] + 5, $queryCounts[100], $diagnostics);
+        $this->assertGreaterThan(0, min($gateChecks));
+        fwrite(STDOUT, 'Sales Orders scaling metrics: '.json_encode([
+            'queries' => $queryCounts,
+            'visible_rows' => $visibleRowCounts,
+            'gate_checks' => $gateChecks,
+        ], JSON_THROW_ON_ERROR).PHP_EOL);
+    }
+
+    public function test_cached_sales_branch_fact_is_invalidated_after_deactivation_in_request(): void
+    {
+        $actor = $this->actor;
+        $branchId = $this->branch->id;
+
+        Route::get('/sales-order-branch-fact', function () use ($actor, $branchId): array {
+            $access = app(SalesAccess::class);
+            $wasAllowed = $access->allows($actor, SalesPermissions::CREATE, $branchId);
+            DB::table('locations')->where('id', $branchId)->update(['is_active' => false]);
+
+            return ['before' => $wasAllowed, 'after' => $access->allows($actor, SalesPermissions::CREATE, $branchId)];
+        })->middleware(BeginAuthorizationRequest::class);
+
+        $this->get('/sales-order-branch-fact')->assertOk()->assertJson(['before' => true, 'after' => false]);
     }
 
     public function test_editing_adds_updates_and_removes_lines_without_repricing_the_catalog(): void
@@ -308,11 +389,17 @@ class SalesOrderManagementTest extends TestCase
     {
         app()->setLocale('ar');
         Livewire::test(CreateSalesOrder::class)->fillForm($this->payload())
-            ->assertSee('fi-fo-table-repeater', false)->assertSee(__('Discount'))->assertSee(__('Taxes'))
+            ->assertSee('fox-order-items', false)->assertSee(__('Discount'))->assertSee(__('Taxes'))
             ->call('create')->assertHasNoFormErrors();
         $order = SalesOrder::firstOrFail();
-        Livewire::test(ViewSalesOrder::class, ['record' => $order->uuid])->assertSuccessful()->assertSee($order->order_number)
-            ->assertSee('data-commercial-snapshot="discount"', false)->assertSee('data-commercial-snapshot="tax"', false);
+        $view = Livewire::test(ViewSalesOrder::class, ['record' => $order->uuid])->assertSuccessful()->assertSee($order->order_number);
+        $lineAction = collect($view->instance()->getCachedSchemas())
+            ->flatMap(fn ($schema): array => $schema->getFlatComponents())
+            ->first(fn ($component): bool => $component instanceof Action && $component->getName() === 'lineDetails');
+        $this->assertNotNull($lineAction);
+        $view->call('mountAction', 'lineDetails', [], ['schemaComponent' => $lineAction->getSchemaComponent()->getKey()])
+            ->assertMountedActionModalSeeHtml('data-commercial-snapshot="discount"')
+            ->assertMountedActionModalSeeHtml('data-commercial-snapshot="tax"');
         Livewire::test(EditSalesOrder::class, ['record' => $order->uuid])->fillForm(['customer_name' => 'Updated customer'])
             ->call('save')->assertHasNoFormErrors();
         $this->assertSame('Updated customer', $order->fresh()->customer_name);

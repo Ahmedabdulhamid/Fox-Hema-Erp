@@ -5,12 +5,12 @@ namespace App\Modules\InventoryCosting\Services;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\Products\Models\Category;
 use App\Modules\Products\Services\ProductReferenceChecker;
 use App\Modules\Products\Services\ProductsAccess;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -21,7 +21,7 @@ class CategoryCostingManager
 
     public function available(): bool
     {
-        return app(ModuleAccess::class)->isActive('inventory_costing') && Schema::hasTable('inventory_valuation_settings');
+        return app(ModuleAccess::class)->isActive('inventory_costing') && RequestAuthorizationFacts::tableExists('inventory_valuation_settings');
     }
 
     public function canView(?User $actor): bool

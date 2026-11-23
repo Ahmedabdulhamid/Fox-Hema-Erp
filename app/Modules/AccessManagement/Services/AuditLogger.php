@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 class AuditLogger
 {
-    private const SENSITIVE_KEYS = ['password', 'password_confirmation', 'token', 'remember_token', 'cookie', 'session_cookie'];
+    private const SENSITIVE_KEYS = ['password', 'password_confirmation', 'token', 'remember_token', 'cookie', 'session_cookie', 'credentials', 'access_key_id', 'secret_access_key', 'session_token', 'authorization', 'replacement_key', 'replacement_secret'];
 
     public function record(string $event, ?User $target = null, array $metadata = [], ?User $actor = null, ?Request $request = null): AuthEvent
     {

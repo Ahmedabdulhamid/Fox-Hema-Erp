@@ -44,7 +44,7 @@ class SalesInvoiceForm
                         Select::make('sales_delivery_item_id')->label(__('invoices.delivery_line'))->required()->searchable()->live()->columnSpanFull()
                             ->options(fn (Get $get): array => app(DocumentSelectors::class)->lines(auth()->user(), 'invoice', $get('../../sales_order_id'), '', $get('brand_id'), $get('product_id')))
                             ->getSearchResultsUsing(fn (Get $get, string $search): array => app(DocumentSelectors::class)->lines(auth()->user(), 'invoice', $get('../../sales_order_id'), $search, $get('brand_id'), $get('product_id')))
-                            ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'invoice', $get('../../sales_order_id'), $value))
+                            ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'invoice', $get('../../sales_order_id'), $value, array_column($get('../../items') ?? [], 'sales_delivery_item_id')))
                             ->disableOptionsWhenSelectedInSiblingRepeaterItems(),
                         Text::make(fn (Get $get): string => self::detail($get, 'delivered')),
                         Text::make(fn (Get $get): string => self::detail($get, 'invoiced')),
@@ -67,7 +67,7 @@ class SalesInvoiceForm
 
     private static function detail(Get $get, string $key): string
     {
-        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'invoice', $get('../../sales_order_id'), $get('sales_delivery_item_id'));
+        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'invoice', $get('../../sales_order_id'), $get('sales_delivery_item_id'), array_column($get('../../items') ?? [], 'sales_delivery_item_id'));
 
         return __('invoices.'.$key).': '.($details[$key] ?? '—');
     }

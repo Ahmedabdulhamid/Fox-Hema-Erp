@@ -18,12 +18,23 @@ class PaymentMethodSeeder extends Seeder
                 ['bank_transfer', 'Bank Transfer / تحويل بنكي', true, 20],
                 ['card', 'Card / بطاقة بنكية', true, 30],
             ] as [$type, $name, $reference, $order]) {
-                if (PaymentMethod::where('type', $type)->lockForUpdate()->first() !== null) {
+                $method = PaymentMethod::where('type', $type)->lockForUpdate()->first();
+                if ($method !== null) {
+                    if ($type === 'cash' && $method->requires_reference) {
+                        $method->requires_reference = false;
+                    }
+                    if ($method->is_active && ! $method->available_in_pos) {
+                        $method->available_in_pos = true;
+                    }
+                    if ($method->isDirty()) {
+                        $method->save();
+                    }
+
                     continue;
                 }
                 PaymentMethod::create(['type' => $type,
                     'name' => $name, 'is_active' => true, 'requires_reference' => $reference,
-                    'available_in_pos' => false, 'sort_order' => $order,
+                    'available_in_pos' => true, 'sort_order' => $order,
                 ]);
             }
         }, 3);

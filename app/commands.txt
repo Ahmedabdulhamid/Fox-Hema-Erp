@@ -1,0 +1,21 @@
+php artisan reporting:sales-recover --limit=100
+php artisan reporting:purchasing-recover --limit=100
+php artisan reporting:inventory-recover --limit=100
+php artisan reporting:profitability-recover --limit=100
+php artisan reporting:stock_transfer-recover --limit=100
+php artisan reporting:cash-recover treasury --limit=100
+php artisan reporting:cash-recover pos --limit=100
+
+
+
+# فحص جاهزية النسخ الاحتياطي
+php artisan backups:readiness
+
+# تقييم جدولة النسخ الاحتياطي فورًا
+php artisan backups:automation
+
+# عرض المهام المجدولة
+php artisan schedule:list
+
+# عرض الـ Jobs الفاشلة
+php artisan queue:failed

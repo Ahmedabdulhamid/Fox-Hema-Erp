@@ -2,6 +2,7 @@
 
 namespace App\Modules\Taxes\Services;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\Products\Models\ProductVariant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -37,7 +38,8 @@ class TaxReferenceChecker
 
     public function hasHistoricalReferences(Model $definition): bool
     {
-        $tables = Schema::getTables(schema: Schema::getCurrentSchemaName());
+        $tables = RequestDisplayData::remember('schema.tables:'.Schema::getCurrentSchemaName(),
+            fn (): array => Schema::getTables(schema: Schema::getCurrentSchemaName()));
         $connection = DB::connection();
         $usesInformationSchema = in_array($connection->getDriverName(), ['mysql', 'mariadb'], true);
         $columnsByTable = [];
@@ -46,12 +48,13 @@ class TaxReferenceChecker
             $columnNames = array_unique([$this->column, 'commercial_snapshot', 'variant_id']);
             $tableNames = array_column($tables, 'name');
 
-            foreach (DB::table('information_schema.columns')
-                ->where('table_schema', Schema::getCurrentSchemaName())
-                ->whereIn('table_name', $tableNames)
-                ->whereIn('column_name', $columnNames)
-                ->selectRaw('table_name AS table_name, column_name AS column_name')
-                ->get() as $column) {
+            $columns = RequestDisplayData::remember('schema.reference-columns:'.json_encode([$tableNames, $columnNames], JSON_THROW_ON_ERROR),
+                fn () => DB::table('information_schema.columns')
+                    ->where('table_schema', Schema::getCurrentSchemaName())
+                    ->whereIn('table_name', $tableNames)
+                    ->whereIn('column_name', $columnNames)
+                    ->selectRaw('table_name AS table_name, column_name AS column_name')->get());
+            foreach ($columns as $column) {
                 $columnsByTable[$column->table_name][strtolower($column->column_name)] = true;
             }
         }

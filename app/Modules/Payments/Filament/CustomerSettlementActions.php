@@ -2,6 +2,7 @@
 
 namespace App\Modules\Payments\Filament;
 
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Modules\Payments\Models\Customer;
 use App\Modules\Payments\Models\CustomerInvoiceAccount;
@@ -43,6 +44,13 @@ class CustomerSettlementActions
         return app(CustomerAccess::class)->ready() && app(CustomerAccess::class)->allows(auth()->user(), $permission, $location);
     }
 
+    /** Visibility-only; mutations re-check the authoritative rows before linking. */
+    private static function invoiceNeedsCustomerLink(SalesInvoice $invoice): bool
+    {
+        return RequestDisplayData::remember('payments.invoice-needs-customer-link.'.$invoice->getKey(), fn (): bool => ! CustomerInvoiceAccount::where('sales_invoice_id', $invoice->id)->exists()
+            && ! Payment::where('source_document_type', 'sales_invoice')->where('source_document_reference', $invoice->uuid)->exists());
+    }
+
     public static function receiveInvoicePayment(): Action
     {
         return Action::make('receivePayment')->label(__('payments.receive_payment'))
@@ -50,9 +58,9 @@ class CustomerSettlementActions
                 && self::can(PaymentsPermissions::CREATE, (int) $record->location_id)
                 && self::can(PaymentsPermissions::POST, (int) $record->location_id)
                 && self::can(PaymentsPermissions::ALLOCATE, (int) $record->location_id)
-                && BigDecimal::of(app(CustomerFinancials::class)->invoice(auth()->user(), $record)['outstanding'])->isPositive())
+                && BigDecimal::of(app(CustomerFinancials::class)->invoiceForDisplay(auth()->user(), $record)['outstanding'])->isPositive())
             ->fillForm(fn (SalesInvoice $record): array => ['operation_key' => (string) Str::uuid7(), 'payment_date' => now()->toDateString(),
-                'amount' => app(CustomerFinancials::class)->invoice(auth()->user(), $record)['outstanding']])
+                'amount' => app(CustomerFinancials::class)->invoiceForDisplay(auth()->user(), $record)['outstanding']])
             ->schema([
                 self::key(),
                 Select::make('payment_method_id')->label(__('payments.fields.payment_method_id'))->options(fn () => app(CustomerTreasury::class)->methods()->pluck('name', 'id'))->required()->live()
@@ -72,7 +80,7 @@ class CustomerSettlementActions
 
     public static function refundCreditNote(): Action
     {
-        return Action::make('refundCreditNote')->label(__('payments.refund_credit'))
+        return Action::make('refundCreditNote')->label(fn (SalesCreditNote $record): string => $record->salesInvoice->salesOrder?->channel === 'pos' ? __('pos.cash_refund.action') : __('payments.refund_credit'))
             ->visible(fn (SalesCreditNote $record): bool => $record->status === 'posted' && $record->cancelled_at === null
                 && self::can(PaymentsPermissions::REFUNDS_CREATE, (int) $record->location_id)
                 && self::can(PaymentsPermissions::REFUNDS_POST, (int) $record->location_id)
@@ -93,7 +101,7 @@ class CustomerSettlementActions
                 TextInput::make('external_reference')->label(__('payments.fields.external_reference'))->maxLength(191),
                 DatePicker::make('refund_date')->label(__('payments.fields.refund_date'))->maxDate(now())->required(),
                 Textarea::make('reason')->label(__('payments.fields.reason'))->required()->maxLength(16000),
-            ])->modalDescription(__('payments.refund_account_help'))->modalSubmitActionLabel(__('payments.refund_credit'))
+            ])->modalDescription(fn (SalesCreditNote $record): string => $record->salesInvoice->salesOrder?->channel === 'pos' ? __('pos.cash_refund.notice') : __('payments.refund_account_help'))->modalSubmitActionLabel(__('payments.refund_credit'))
             ->action(function (SalesCreditNote $record, array $data): void {
                 CustomerPaymentMutation::run(fn () => app(CustomerRefunds::class)->refundCreditNote(auth()->user(), $record, array_diff_key($data, ['operation_key' => true]), $data['operation_key']));
                 Notification::make()->title(__('payments.refund_posted'))->success()->send();
@@ -111,8 +119,7 @@ class CustomerSettlementActions
 
     public static function linkInvoice(bool $fromInvoice = false): Action
     {
-        return Action::make('linkCustomerInvoice')->label(__('Link customer invoice'))->visible(fn ($record) => self::can(PaymentsPermissions::ALLOCATE, (int) $record->location_id) && (! $fromInvoice || ($record->status === 'posted' && ! CustomerInvoiceAccount::where('sales_invoice_id', $record->id)->exists()
-                && ! Payment::where('source_document_type', 'sales_invoice')->where('source_document_reference', $record->uuid)->exists())))
+        return Action::make('linkCustomerInvoice')->label(__('Link customer invoice'))->visible(fn ($record) => self::can(PaymentsPermissions::ALLOCATE, (int) $record->location_id) && (! $fromInvoice || ($record->status === 'posted' && self::invoiceNeedsCustomerLink($record))))
             ->schema([
                 self::key(),
                 Select::make('customer_id')->label(__('payments.fields.customer_id'))->options(fn () => Resources\CustomerPayments\CustomerPaymentResource::customers())->searchable()->required()->visible($fromInvoice),

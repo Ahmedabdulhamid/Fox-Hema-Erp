@@ -4,12 +4,18 @@ namespace App\Modules\Products\Filament\Resources\Products\Tables;
 
 use App\Models\MoneyFormatter;
 use App\Modules\Products\Filament\ProductMutation;
+use App\Modules\Products\Filament\Resources\Products\ProductResource;
 use App\Modules\Products\Models\Product;
+use App\Modules\Products\Models\ProductExport as ExportRecord;
 use App\Modules\Products\Services\ProductCatalogManager;
+use App\Modules\Products\Services\ProductExport;
 use App\Modules\Products\Services\ProductsAccess;
+use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -19,6 +25,7 @@ use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 
 class ProductsTable
 {
@@ -54,6 +61,31 @@ class ProductsTable
                 SelectFilter::make('category')->label(__('Category'))->relationship('category', 'name')->searchable()->preload(),
                 Filter::make('missing_variants')->label(__('Missing variants'))->query(fn (Builder $query): Builder => $query->doesntHave('variants'))])->defaultSort('name')->recordAction(null)->recordActions([
                     ViewAction::make(), EditAction::make(), DeleteAction::make()->using(fn (Model $record): bool => ProductMutation::run(fn () => app(ProductCatalogManager::class)->delete(auth()->user(), $record))),
+                ])->headerActions([
+                    Action::make('exportAll')->label(__('product_export.all'))->icon('heroicon-o-arrow-down-tray')
+                        ->visible(fn (): bool => app(ProductsAccess::class)->allows(auth()->user(), 'products.view'))
+                        ->action(fn () => self::exportProducts(ProductResource::getEloquentQuery())),
+                    Action::make('exportHistory')->label(__('product_export.history'))->icon('heroicon-o-clock')
+                        ->modalContent(fn () => view('products.export-history', ['exports' => ExportRecord::where('actor_id', auth()->id())
+                            ->where('location_id', getPermissionsTeamId())->latest('id')->limit(20)->get()]))
+                        ->modalSubmitAction(false)->modalCancelActionLabel(__('Close')),
+                ])->toolbarActions([
+                    BulkAction::make('exportSelected')->label(__('product_export.selected'))->icon('heroicon-o-arrow-down-tray')
+                        ->visible(fn (): bool => app(ProductsAccess::class)->allows(auth()->user(), 'products.view'))
+                        ->fetchSelectedRecords(false)
+                        ->action(fn (BulkAction $action) => self::exportProducts($action->getSelectedRecordsQuery()))
+                        ->deselectRecordsAfterCompletion(),
                 ]);
+    }
+
+    private static function exportProducts(Builder $query): void
+    {
+        try {
+            app(ProductExport::class)->request(auth()->user(), $query);
+            Notification::make()->title(__('product_export.queued'))->success()->send();
+        } catch (ValidationException $exception) {
+            Notification::make()->title(__('product_export.failed'))->body(implode(' ', $exception->validator->errors()->all()))->danger()->send();
+
+        }
     }
 }

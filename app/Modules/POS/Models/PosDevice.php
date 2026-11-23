@@ -6,10 +6,12 @@ use App\Models\Concerns\HasPublicSlug;
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
+use App\Modules\Payments\Models\PaymentMethod;
 use App\Modules\POS\Database\Factories\PosDeviceFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PosDevice extends Model
@@ -18,7 +20,7 @@ class PosDevice extends Model
     use HasFactory;
 
     use HasPublicSlug, HasPublicUuid {
-        HasPublicSlug::getRouteKeyName insteadof HasPublicUuid;
+        HasPublicUuid::getRouteKeyName insteadof HasPublicSlug;
     }
 
     protected $fillable = [
@@ -47,6 +49,11 @@ class PosDevice extends Model
         ];
     }
 
+    public function save(array $options = []): bool
+    {
+        return $this->getConnection()->transaction(fn (): bool => parent::save($options));
+    }
+
     public function location(): BelongsTo
     {
         return $this->belongsTo(Location::class, 'location_id');
@@ -65,5 +72,17 @@ class PosDevice extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(PosTransaction::class, 'pos_device_id');
+    }
+
+    public function paymentConfigurations(): HasMany
+    {
+        return $this->hasMany(PosDevicePaymentMethod::class, 'pos_device_id');
+    }
+
+    public function paymentMethods(): BelongsToMany
+    {
+        return $this->belongsToMany(PaymentMethod::class, 'pos_device_payment_methods')
+            ->withPivot(['uuid', 'treasury_account_id', 'is_active'])
+            ->withTimestamps();
     }
 }

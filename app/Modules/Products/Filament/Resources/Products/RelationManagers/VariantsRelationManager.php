@@ -78,7 +78,7 @@ class VariantsRelationManager extends RelationManager
         $canViewValuation = app(VariantInventoryValuation::class)->canView(auth()->user())
             && auth()->user()->can('view', $this->getOwnerRecord());
 
-        return $table->heading(__('Variants & prices'))->description(__('Manage sellable SKUs, size/color combinations, sale prices and reference costs.'))->emptyStateHeading(__('Add the first sellable variant'))->emptyStateDescription(__('Create a dimensionless variant for a simple product, or size/color variants for a variable product.'))->recordTitleAttribute('sku')->modifyQueryUsing(function (Builder $query): Builder {
+        return $table->heading(__('Variants & inventory identities'))->description(__('Unallocated pieces are separate inventory identities, not sellable size/color combinations.'))->emptyStateHeading(__('Add the first sellable variant'))->emptyStateDescription(__('Create a dimensionless variant for a simple product, or size/color variants for a variable product.'))->recordTitleAttribute('sku')->modifyQueryUsing(function (Builder $query): Builder {
             if (! app(ProductsAccess::class)->referenceCost(auth()->user())) {
                 $query->select(['product_variants.id', 'product_variants.uuid', 'product_id', 'unallocated_product_id', 'size_id', 'color_id', 'sku', 'barcode', 'sale_price', 'is_active', 'created_at', 'updated_at']);
             }

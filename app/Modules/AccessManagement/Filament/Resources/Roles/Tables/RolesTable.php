@@ -2,11 +2,13 @@
 
 namespace App\Modules\AccessManagement\Filament\Resources\Roles\Tables;
 
+use App\Modules\AccessManagement\Services\LocationContext;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class RolesTable
 {
@@ -19,7 +21,8 @@ class RolesTable
             TextColumn::make('permissions_count')->label(__('Permissions'))->sortable(),
             TextColumn::make('users_count')->label(__('Users'))->sortable(),
         ])->filters([
-            SelectFilter::make('location_id')->label(__('Location'))->relationship('location', 'name'),
+            SelectFilter::make('location_id')->label(__('Location'))->relationship('location', 'name',
+                fn (Builder $query): Builder => app(LocationContext::class)->scopeLocationQuery($query, auth()->user(), 'roles.view')),
         ])->recordActions([
             EditAction::make(),
             DeleteAction::make(),

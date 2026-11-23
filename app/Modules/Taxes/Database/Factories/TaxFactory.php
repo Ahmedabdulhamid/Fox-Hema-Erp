@@ -20,6 +20,7 @@ class TaxFactory extends Factory
             'rate' => '0.0000',
             'price_inclusion' => 'excluded',
             'usage' => 'sales',
+            'purchase_treatment' => null,
             'is_active' => true,
             'effective_from' => null,
             'effective_to' => null,

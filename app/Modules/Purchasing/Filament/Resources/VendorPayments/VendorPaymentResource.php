@@ -2,12 +2,15 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\VendorPayments;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\Payments\Models\PaymentMethod;
 use App\Modules\Purchasing\Filament\Resources\VendorBills\VendorBillResource;
 use App\Modules\Purchasing\Models\Supplier;
 use App\Modules\Purchasing\Models\VendorPayment;
+use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Purchasing\Services\SupplierFinancialBalances;
 use App\Modules\Purchasing\Services\VendorPaymentAccess;
 use App\Modules\Purchasing\Services\VendorPaymentTreasury;
@@ -35,7 +38,6 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
@@ -66,20 +68,22 @@ class VendorPaymentResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return app(VendorPaymentAccess::class)->scope(parent::getEloquentQuery(), auth()->user())->with(['supplier', 'location', 'paymentMethod'])
-            ->withSum(['allocations as allocated_amount' => fn (Builder $query) => $query->whereNull('released_at')->whereHas('vendorBill', fn (Builder $query) => $query->where('status', 'posted'))], 'amount');
+        return app(VendorPaymentAccess::class)->scope(parent::getEloquentQuery(), auth()->user())
+            ->with(['supplier', 'location', 'paymentMethod']);
     }
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Select::make('supplier_id')->label(__('Supplier'))->options(fn (): array => Supplier::where('is_active', true)->orderBy('name')->pluck('name', 'id')->all())->searchable()->required(),
+            Select::make('supplier_id')->label(__('Supplier'))->options(fn (): array => self::supplierOptions())->searchable()->required()
+                ->getSearchResultsUsing(fn (string $search): array => self::supplierOptions($search))
+                ->getOptionLabelUsing(fn ($value): ?string => self::supplierOptions(value: $value)[$value] ?? null),
             Select::make('location_id')->label(__('vendor_payments.purchase_location'))->options(fn (): array => Location::where('is_active', true)
                 ->when(! auth()->user()->isGlobalSuperAdmin(), fn ($query) => $query->whereKey(getPermissionsTeamId()))->pluck('name', 'id')->all())->required()->live()->helperText(__('vendor_payments.location_help'))
                 ->afterStateUpdated(fn (Set $set) => $set('treasury_account_id', null)),
             DatePicker::make('payment_date')->label(__('vendor_payments.payment_date'))->default(now()->format('Y-m-d'))->maxDate(now())->required(),
             TextInput::make('amount')->label(__('Payment amount'))->suffix('EGP')->inputMode('decimal')->required()->helperText(__('vendor_payments.allocation_help')),
-            Select::make('payment_method_id')->label(__('Payment method'))->options(fn (): array => PaymentMethod::where('is_active', true)->whereIn('type', ['cash', 'bank_transfer'])->orderBy('sort_order')->orderBy('id')->pluck('name', 'id')->all())->live()->required()
+            Select::make('payment_method_id')->label(__('Payment method'))->options(fn (): array => app(ReadModelCache::class)->options('payments', PaymentMethod::where('is_active', true)->whereIn('type', ['cash', 'bank_transfer'])->orderBy('sort_order')->orderBy('id')))->live()->required()
                 ->helperText(__('vendor_payments.method_help'))->afterStateUpdated(function (Set $set): void {
                     $set('treasury_account_id', null);
                     $set('external_reference', null);
@@ -90,16 +94,48 @@ class VendorPaymentResource extends Resource
                 ->noOptionsMessage(__('vendor_payments.no_accounts'))
                 ->helperText(__('vendor_payments.source_help')),
             TextInput::make('external_reference')->label(__('vendor_payments.transaction_reference'))->maxLength(255)
-                ->required(fn (Get $get): bool => (bool) PaymentMethod::whereKey($get('payment_method_id'))->where('is_active', true)->value('requires_reference')),
+                ->required(function (Get $get): bool {
+                    $methodId = $get('payment_method_id');
+                    if (! is_scalar($methodId) || blank($methodId)) {
+                        return false;
+                    }
+
+                    return (bool) (self::activePaymentMethod($methodId)?->requires_reference ?? false);
+                }),
             Textarea::make('notes')->label(__('Notes'))->maxLength(16000),
         ]);
     }
 
+    private static function activePaymentMethod(mixed $methodId): ?PaymentMethod
+    {
+        if (! is_scalar($methodId) || blank($methodId)) {
+            return null;
+        }
+
+        return RequestDisplayData::remember('vendor-payment.active-method.'.$methodId, fn (): ?PaymentMethod => PaymentMethod::query()
+            ->whereKey($methodId)->where('is_active', true)->first(['id', 'type', 'requires_reference']));
+    }
+
+    /** @return array<int|string, string> */
+    private static function supplierOptions(string $search = '', mixed $value = null): array
+    {
+        app(VendorPaymentAccess::class)->authorize(auth()->user(), PurchasingPermissions::PAYMENTS_VIEW);
+        $query = Supplier::where('is_active', true)->when($value !== null, fn ($query) => $query->whereKey($value))
+            ->when(trim($search) !== '', fn ($query) => $query->where('name', 'like', '%'.mb_substr(trim($search), 0, 100).'%'))
+            ->orderBy('name')->orderBy('id')->limit(50);
+
+        return app(ReadModelCache::class)->options('suppliers', $query);
+    }
+
     public static function sourceOptions(mixed $methodId): array
     {
+        if (! is_scalar($methodId) || blank($methodId)) {
+            return [];
+        }
+
         try {
-            $method = PaymentMethod::whereKey($methodId)->where('is_active', true)->whereIn('type', ['cash', 'bank_transfer'])->first();
-            if ($method === null) {
+            $method = self::activePaymentMethod($methodId);
+            if ($method === null || ! in_array($method->type, ['cash', 'bank_transfer'], true)) {
                 return [];
             }
             $type = $method->type;
@@ -113,7 +149,9 @@ class VendorPaymentResource extends Resource
                     app(TreasuryAccess::class)->operation(auth()->user(), TreasuryPermissions::CREATE, $account->location_id);
                     $options[$account->id] = $account->name.' | EGP';
                     try {
-                        $balance = app(TreasuryService::class)->balance(auth()->user(), $account);
+                        app(TreasuryAccess::class)->operation(auth()->user(), TreasuryPermissions::BALANCES, $account->location_id);
+                        $balance = RequestDisplayData::remember('treasury.account-selector-balance.'.$account->id,
+                            fn (): string => app(TreasuryService::class)->balanceForDisplay(auth()->user(), $account));
                         $options[$account->id] .= ' | '.__('Available balance').': '.$balance;
                     } catch (AuthorizationException|HttpException) {
                         continue;
@@ -131,17 +169,19 @@ class VendorPaymentResource extends Resource
 
     public static function infolist(Schema $schema, ?Closure $displayAmounts = null): Schema
     {
-        $allocationRows = [];
-        $getAllocationRows = function (VendorPayment $record) use (&$allocationRows): Collection {
-            $resolve = fn (): Collection => $record->allocations()->whereHas('vendorBill', fn (Builder $query) => $query->where('supplier_id', $record->supplier_id)
+        $getAllocationRows = function (VendorPayment $record): array {
+            app(VendorPaymentAccess::class)->authorize(auth()->user(), PurchasingPermissions::PAYMENTS_VIEW, $record->location_id);
+            $query = $record->allocations()->whereHas('vendorBill', fn (Builder $query) => $query->where('supplier_id', $record->supplier_id)
                 ->whereHas('purchaseOrder', fn (Builder $query) => $query->where('location_id', $record->location_id)))
-                ->with('vendorBill')->latest('id')->limit(50)->get();
+                ->with(['vendorBill' => fn ($query) => $query->without('documentNumber')])->latest('id')->limit(50);
 
-            if (! request()->isMethod('GET')) {
-                return $resolve();
-            }
-
-            return $allocationRows[$record->getKey()] ??= $resolve();
+            return RequestDisplayData::remember('supplier.payment-allocation-rows.'.$record->getKey(),
+                fn (): array => app(ReadModelCache::class)->remember('purchasing', ['payment-allocation-history', $record->id, $record->supplier_id, $record->location_id],
+                    fn (): array => $query->get()->map(fn ($allocation): array => [
+                        'vendorBill' => ['bill_number' => $allocation->vendorBill->bill_number, 'uuid' => $allocation->vendorBill->uuid],
+                        'amount' => $allocation->amount, 'allocated_at' => $allocation->allocated_at?->toDateTimeString(),
+                        'released_at' => $allocation->released_at?->toDateTimeString(),
+                    ])->all(), config('read_cache.report_ttl'), $record->getConnection()));
         };
 
         return $schema->components([
@@ -154,7 +194,7 @@ class VendorPaymentResource extends Resource
                 ->state(function (VendorPayment $record) use ($displayAmounts): string {
                     try {
                         $amounts = $displayAmounts === null
-                            ? app(SupplierFinancialBalances::class)->payment(auth()->user(), $record)
+                            ? app(SupplierFinancialBalances::class)->paymentForDisplay(auth()->user(), $record)
                             : $displayAmounts();
                     } catch (ValidationException $exception) {
                         return collect($exception->errors())->flatten()->implode(' ');
@@ -173,7 +213,7 @@ class VendorPaymentResource extends Resource
                 ->visible(fn (VendorPayment $record): bool => $record->location_id !== null && $record->idempotency_key !== null)
                 ->state($getAllocationRows)
                 ->schema([
-                    TextEntry::make('vendorBill.bill_number')->label(__('Bill'))->url(fn ($record): string => VendorBillResource::getUrl('view', ['record' => $record->vendorBill->uuid])),
+                    TextEntry::make('vendorBill.bill_number')->label(__('Bill'))->url(fn (TextEntry $component): string => VendorBillResource::getUrl('view', ['record' => data_get($component->getContainer()->getConstantState(), 'vendorBill.uuid')])),
                     TextEntry::make('amount')->label(__('Allocation amount')),
                     TextEntry::make('allocated_at')->label(__('Allocated at'))->dateTime(),
                     TextEntry::make('released_at')->label(__('Released at'))->dateTime(),
@@ -188,8 +228,10 @@ class VendorPaymentResource extends Resource
             if ($operation === null) {
                 return $record->treasury_account_id === null ? __('Legacy / unlinked') : __('Not posted');
             }
-            $account = TreasuryAccount::findOrFail($operation->account_id);
-            $reversal = $operation->newQuery()->where('reversal_of_id', $operation->id)->first();
+            $account = RequestDisplayData::remember('supplier.payment-source-account.'.$operation->account_id,
+                fn (): TreasuryAccount => TreasuryAccount::findOrFail($operation->account_id));
+            $reversal = RequestDisplayData::remember('supplier.payment-treasury-reversal.'.$operation->id,
+                fn () => $operation->newQuery()->where('reversal_of_id', $operation->id)->first());
 
             return $operation->uuid.' | '.$account->name.' | '.$operation->amount.' '.$operation->currency
                 .($reversal === null ? '' : ' | '.__('Recovery movement').': '.$reversal->uuid);
@@ -204,11 +246,16 @@ class VendorPaymentResource extends Resource
             return __('Legacy / unlinked');
         }
         try {
-            $account = TreasuryAccount::findOrFail($record->treasury_account_id);
+            $account = RequestDisplayData::remember('supplier.payment-source-account.'.$record->treasury_account_id,
+                fn (): TreasuryAccount => TreasuryAccount::findOrFail($record->treasury_account_id));
             app(TreasuryAccess::class)->authorize(auth()->user(), TreasuryPermissions::VIEW, $account->location_id);
             $description = $account->name.' | '.$account->currency;
             try {
-                return $description.' | '.__('Available balance').': '.app(TreasuryService::class)->balance(auth()->user(), $account);
+                app(TreasuryAccess::class)->operation(auth()->user(), TreasuryPermissions::BALANCES, $account->location_id);
+                $balance = RequestDisplayData::remember('treasury.account-selector-balance.'.$account->id,
+                    fn (): string => app(TreasuryService::class)->balanceForDisplay(auth()->user(), $account));
+
+                return $description.' | '.__('Available balance').': '.$balance;
             } catch (AuthorizationException|HttpException) {
                 return $description;
             }
@@ -219,7 +266,10 @@ class VendorPaymentResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table->columns([
+        return $table->modifyQueryUsing(fn (Builder $query): Builder => $query->withSum([
+            'allocations as allocated_amount' => fn (Builder $query) => $query->whereNull('released_at')
+                ->whereHas('vendorBill', fn (Builder $query) => $query->where('status', 'posted')),
+        ], 'amount'))->columns([
             TextColumn::make('payment_number')->label(__('Payment number'))->searchable(),
             TextColumn::make('supplier.name')->label(__('Supplier'))->searchable(),
             TextColumn::make('location.name')->label(__('Location'))->placeholder(__('Legacy / unlinked')),

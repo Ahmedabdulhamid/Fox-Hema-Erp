@@ -27,6 +27,7 @@ use App\Modules\Products\Services\ProductCatalogManager;
 use App\Modules\Products\Services\ProductReferenceChecker;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
@@ -76,6 +77,20 @@ class CategoryManagementTest extends TestCase
         $this->actingAs($user);
 
         return $user;
+    }
+
+    public function test_categories_receive_sequential_short_codes_and_show_them_read_only_after_creation(): void
+    {
+        $this->admin();
+        Livewire::test(CreateCategory::class)->assertFormFieldIsHidden('code');
+
+        $first = Category::create(['name' => 'Generated category one']);
+        $second = Category::create(['name' => 'Generated category two']);
+        $this->assertSame('CAT-0001', $first->code);
+        $this->assertSame('CAT-0002', $second->code);
+        Livewire::test(EditCategory::class, ['record' => $first->slug])
+            ->assertFormSet(['code' => $first->code])
+            ->assertFormFieldExists('code', fn (TextInput $field): bool => $field->isReadOnly());
     }
 
     public function test_parent_options_only_show_active_roots_and_exclude_the_edited_category(): void

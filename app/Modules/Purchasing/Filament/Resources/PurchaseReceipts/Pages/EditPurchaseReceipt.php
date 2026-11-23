@@ -5,6 +5,7 @@ namespace App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Pages;
 use App\Modules\Products\Filament\ProductMutation;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\PurchaseReceiptResource;
 use App\Modules\Purchasing\Services\PurchaseReceiptService;
+use App\Modules\Purchasing\Services\PurchasingDisplay;
 use Brick\Math\BigDecimal;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
@@ -23,12 +24,13 @@ class EditPurchaseReceipt extends EditRecord
     {
         $service = app(PurchaseReceiptService::class);
         $this->revision = $service->revision($this->record);
-        $received = $service->received($this->record->purchaseOrder);
+        $received = app(PurchasingDisplay::class)->received(auth()->user(), $this->record->purchaseOrder);
         $data['po_number'] = $this->record->purchaseOrder->order_number;
         $data['supplier_name'] = $this->record->purchaseOrder->supplier->name;
         $data['destination'] = $this->record->location->name;
         $data['received_at'] = $this->record->received_at?->format('Y-m-d H:i:s');
-        $data['items'] = $this->record->items()->with('purchaseOrderItem.variant')->orderBy('id')->get()->map(function ($item) use ($received): array {
+        $this->record->loadMissing(['items.purchaseOrderItem.variant.product', 'items.purchaseOrderItem.variant.color', 'items.purchaseOrderItem.variant.size']);
+        $data['items'] = $this->record->items->sortBy('id')->values()->map(function ($item) use ($received): array {
             $line = $item->purchaseOrderItem;
 
             return ['id' => $item->id, 'variant_label' => $line->variant->displayName(),

@@ -2,8 +2,9 @@
 
 namespace App\Modules\AccessManagement\Services;
 
+use App\Modules\AccessManagement\Models\DatabaseSession;
 use App\Modules\AccessManagement\Models\User;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class SessionManager
 {
@@ -13,7 +14,15 @@ class SessionManager
             return false;
         }
 
-        $query = DB::table(config('session.table', 'sessions'))->where('id', $sessionId);
+        $query = DatabaseSession::query()->whereKey($sessionId);
+        if (auth()->check()) {
+            $session = (clone $query)->first();
+            if ($session === null) {
+                return false;
+            }
+            Gate::authorize('delete', $session);
+            $query->visibleTo(auth()->user());
+        }
         $target === null
             ? $query->whereNull('user_id')
             : $query->where('user_id', $target->getKey());
@@ -28,7 +37,14 @@ class SessionManager
 
     public function revokeAll(User $target, ?string $except = null): int
     {
-        $query = DB::table(config('session.table', 'sessions'))->where('user_id', $target->getKey());
+        $query = DatabaseSession::query()->where('user_id', $target->getKey());
+        $actor = auth()->user();
+        if ($actor !== null && ! $actor->is($target) && ! $actor->isGlobalSuperAdmin()) {
+            if ($target->is_active || ! $actor->can('update', $target)) {
+                Gate::authorize('revokeSessions', $target);
+            }
+            $query->inActorLocation($actor);
+        }
         if ($except !== null) {
             $query->where('id', '!=', $except);
         }

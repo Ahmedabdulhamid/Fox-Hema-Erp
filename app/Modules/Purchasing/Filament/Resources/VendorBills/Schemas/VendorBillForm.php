@@ -2,13 +2,18 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\VendorBills\Schemas;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Models\QuantityFormatter;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\Products\Filament\ProductLinePreview;
 use App\Modules\Purchasing\Filament\BillMutation;
 use App\Modules\Purchasing\Models\PurchaseOrder;
+use App\Modules\Purchasing\Models\VendorBillReceiptMatch;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
+use App\Modules\Purchasing\Services\PurchasingAccess;
+use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Purchasing\Services\VendorBillService;
 use Brick\Math\BigDecimal;
 use Filament\Forms\Components\DatePicker;
@@ -23,6 +28,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class VendorBillForm
@@ -78,7 +84,8 @@ class VendorBillForm
                         ProductLinePreview::make(self::class, 'variant_id', function (Get $get, array $ids): Collection {
                             $order = self::authorizedOrder($get('../../purchase_order_id'));
 
-                            return $order === null ? collect() : $order->items()->whereIn('variant_id', $ids)->with(['variant.images', 'variant.product.images'])->get()->keyBy('variant_id');
+                            return $order === null ? collect() : $order->items()->whereIn('variant_id', $ids)
+                                ->with(['variant.images', 'variant.product.images', 'variant.product.brand', 'variant.color', 'variant.size'])->get()->keyBy('variant_id');
                         }),
                         TextInput::make('description')->label(__('Product / Variant'))->required()->maxLength(255)->columnSpanFull(),
                         TextInput::make('quantity')->label(__('Quantity to bill'))->required()->inputMode('decimal')->live(onBlur: true)
@@ -92,11 +99,13 @@ class VendorBillForm
                             }),
                         TextInput::make('unit_price')->label(__('Invoice unit price'))->required()->inputMode('decimal')->live(onBlur: true),
                         TextInput::make('discount_amount')->label(__('Invoice discount'))->default('0')->required()->inputMode('decimal')->live(onBlur: true)
-                            ->readOnly(fn (Get $get): bool => self::usesConfiguredPricing($get)),
+                            ->readOnly(fn (Get $get): bool => self::usesConfiguredPricing($get))
+                            ->helperText(fn (Get $get): ?string => self::usesConfiguredPricing($get)
+                                ? __('Calculated from the confirmed purchase terms when the bill is saved.') : null),
                         TextInput::make('tax_amount')->label(__('Invoice tax'))->default('0')->required()->inputMode('decimal')->live(onBlur: true)
                             ->readOnly(fn (Get $get): bool => self::usesConfiguredPricing($get))
                             ->helperText(fn (Get $get): string => self::usesConfiguredPricing($get)
-                                ? __('Inherited from confirmed purchase pricing. Unsupported tax and supplier discount policies are blocked.')
+                                ? __('Calculated from confirmed purchase terms when the bill is saved. It does not revalue received inventory.')
                                 : __('Historical purchase pricing: review existing invoice amounts before posting.')),
                         Text::make(fn (Get $get): string => self::preview($get))->columnSpanFull(),
                         Repeater::make('allocations')->label(__('Receipt allocations'))->minItems(1)->maxItems(200)->addable(false)->reorderable(false)->deletable(false)->columnSpanFull()->schema([
@@ -113,14 +122,23 @@ class VendorBillForm
 
     public static function authorizedOrder(mixed $id): ?PurchaseOrder
     {
-        return app(DocumentSelectors::class)->selectedOrder(auth()->user(), 'purchase', $id);
+        if (! is_scalar($id) || (! ctype_digit((string) $id) && ! Str::isUuid((string) $id))) {
+            return null;
+        }
+        if (! app(PurchasingAccess::class)->allows(auth()->user(), PurchasingPermissions::ORDERS_VIEW)) {
+            return null;
+        }
+
+        return RequestDisplayData::remember('vendor-bill.order.'.$id,
+            fn (): ?PurchaseOrder => app(DocumentSelectors::class)->selectedOrder(auth()->user(), 'purchase', $id));
     }
 
     private static function usesConfiguredPricing(Get $get): bool
     {
         $order = self::authorizedOrder($get('../../purchase_order_id'));
 
-        return $order !== null && $order->items()->whereNotNull('commercial_snapshot')->exists();
+        return $order !== null && RequestDisplayData::remember('vendor-bill.configured-pricing.'.$order->id,
+            fn (): bool => $order->items()->whereNotNull('commercial_snapshot')->exists());
     }
 
     private static function receiptSummary(Get $get): string
@@ -129,27 +147,40 @@ class VendorBillForm
         if ($order === null) {
             return __('Select a Purchase Order');
         }
-        $service = app(VendorBillService::class);
-        $line = $service->receiptLines($order)->firstWhere('id', $get('purchase_receipt_item_id'));
+        $ids = collect($get('../../../../items') ?? [])->flatMap(fn (array $item): array => array_column($item['allocations'] ?? [], 'purchase_receipt_item_id'))
+            ->filter(fn ($id): bool => is_scalar($id) && ctype_digit((string) $id))->map(fn ($id): int => (int) $id)->unique()->sort()->values()->all();
+        $summary = RequestDisplayData::remember('vendor-bill.receipts.'.$order->id.'.'.hash('sha256', json_encode($ids, JSON_THROW_ON_ERROR)), fn (): array => app(ReadModelCache::class)->remember('purchasing', ['bill-receipt-display', $order->id, $order->location_id, $ids], function () use ($order, $ids): array {
+            $lines = $order->receiptItems()->whereIn('id', $ids)
+                ->whereHas('purchaseReceipt', fn ($query) => $query->where('status', 'posted')->where('location_id', $order->location_id))
+                ->with(['purchaseReceipt', 'purchaseOrderItem'])->get()->keyBy('id');
+            $billed = $lines->isEmpty() ? collect() : VendorBillReceiptMatch::whereIn('purchase_receipt_item_id', $lines->modelKeys())
+                ->whereHas('vendorBillItem.vendorBill', fn ($query) => $query->where('status', 'posted'))
+                ->selectRaw('purchase_receipt_item_id, SUM(matched_quantity) as billed_quantity')
+                ->groupBy('purchase_receipt_item_id')->pluck('billed_quantity', 'purchase_receipt_item_id');
+
+            return ['lines' => $lines->map(fn ($line): array => ['id' => $line->id, 'quantity' => $line->quantity, 'unit_cost' => $line->unit_cost,
+                'reference' => $line->purchaseReceipt->display_reference, 'unit_price' => $line->purchaseOrderItem->unit_price])->all(), 'billed' => $billed->all()];
+        }, config('read_cache.report_ttl'), $order->getConnection()));
+        $line = $summary['lines'][$get('purchase_receipt_item_id')] ?? null;
         if ($line === null) {
             return __('Invalid receipt allocation.');
         }
-        $remaining = $service->remaining($line);
+        $remaining = (string) BigDecimal::of($line['quantity'])->minus(($summary['billed'][$line['id']] ?? '0'))->toScale(4);
         $price = $get('../../unit_price');
         $variance = '';
         try {
             $price = app(PurchaseOrderCalculator::class)->decimal($price, 'unit_price', 18, 6);
-            if (! BigDecimal::of($price)->isEqualTo($line->unit_cost)) {
-                $variance = ' | '.__('Price difference requires review').': '.MoneyFormatter::precise((string) BigDecimal::of($price)->minus($line->unit_cost));
+            if (! BigDecimal::of($price)->isEqualTo($line['unit_cost'])) {
+                $variance = ' | '.__('Price difference requires review').': '.MoneyFormatter::precise((string) BigDecimal::of($price)->minus($line['unit_cost']));
             }
         } catch (ValidationException $exception) {
         }
 
-        return $line->purchaseReceipt->display_reference.' | '.__('Received quantity').': '.QuantityFormatter::format($line->quantity)
-            .' | '.__('Previously billed').': '.QuantityFormatter::format((string) BigDecimal::of($line->quantity)->minus($remaining))
+        return $line['reference'].' | '.__('Received quantity').': '.QuantityFormatter::format($line['quantity'])
+            .' | '.__('Previously billed').': '.QuantityFormatter::format((string) BigDecimal::of($line['quantity'])->minus($remaining))
             .' | '.__('Remaining billable').': '.QuantityFormatter::format($remaining)
-            .' | '.__('PO unit price').': '.MoneyFormatter::precise($line->purchaseOrderItem->unit_price)
-            .' | '.__('Receipt purchase cost').': '.MoneyFormatter::precise($line->unit_cost).$variance;
+            .' | '.__('PO unit price').': '.MoneyFormatter::precise($line['unit_price'])
+            .' | '.__('Receipt purchase cost').': '.MoneyFormatter::precise($line['unit_cost']).$variance;
     }
 
     private static function preview(Get $get, bool $total = false): string

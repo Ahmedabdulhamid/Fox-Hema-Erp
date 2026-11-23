@@ -26,7 +26,6 @@ class SalesInvoiceActions
     public static function download(string $locale): Action
     {
         return Action::make('download_'.$locale)->label(__('invoices.download_'.$locale))->authorize('download')
-            ->visible(fn (SalesInvoice $record): bool => auth()->user()?->can('download', $record) ?? false)
             ->url(fn (SalesInvoice $record): string => route('sales.invoices.pdf', ['invoice' => $record->uuid, 'locale' => $locale]));
     }
 
@@ -34,7 +33,6 @@ class SalesInvoiceActions
     {
         return Action::make($operation)->label(__('invoices.'.$operation))->authorize($operation)
             ->color($operation === 'post' ? 'success' : 'danger')->requiresConfirmation()
-            ->visible(fn (SalesInvoice $record): bool => auth()->user()?->can($operation, $record) ?? false)
             ->modalDescription(__('invoices.'.$operation.'_confirm'))
             ->schema([Hidden::make('revision')->default(fn (SalesInvoice $record): string => app(SalesInvoiceService::class)->revision($record))])
             ->action(function (SalesInvoice $record, array $data, Component $livewire, Action $action) use ($operation): void {

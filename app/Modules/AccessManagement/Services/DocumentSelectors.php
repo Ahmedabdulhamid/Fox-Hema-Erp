@@ -2,6 +2,8 @@
 
 namespace App\Modules\AccessManagement\Services;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Models\QuantityFormatter;
 use App\Modules\AccessManagement\Models\User;
@@ -55,7 +57,13 @@ class DocumentSelectors
             });
         }
 
-        return $query->orderByDesc('id')->limit(50)->get()->mapWithKeys(fn (Model $record): array => [$record->uuid => $this->orderLabel($record)])->all();
+        $query->orderByDesc('id')->limit(50);
+        $read = fn (): array => $query->get()->mapWithKeys(fn (Model $record): array => [$record->uuid => $this->orderLabel($record)])->all();
+
+        return $kind === 'purchase'
+            ? app(ReadModelCache::class)->remember('purchasing', ['document-order-options', $actor?->id, $query->toSql(), $query->getBindings()],
+                $read, config('read_cache.report_ttl'), $query->getConnection())
+            : $read();
     }
 
     public function selectedOrder(?User $actor, string $kind, mixed $value): ?Model
@@ -64,8 +72,10 @@ class DocumentSelectors
             return null;
         }
 
-        return $this->orderQuery($actor, $kind)->with($kind === 'purchase' ? ['location', 'supplier'] : ['location'])
-            ->where(Str::isUuid((string) $value) ? 'uuid' : 'id', $value)->first();
+        $query = $this->orderQuery($actor, $kind)->with($kind === 'purchase' ? ['location', 'supplier'] : ['location']);
+
+        return RequestDisplayData::remember('document-selected-order:'.json_encode([$actor?->id, $kind, (string) $value], JSON_THROW_ON_ERROR),
+            fn (): ?Model => $query->where(Str::isUuid((string) $value) ? 'uuid' : 'id', $value)->first());
     }
 
     public function selectedLabel(?User $actor, string $kind, mixed $value): ?string
@@ -120,18 +130,24 @@ class DocumentSelectors
             ->mapWithKeys(fn ($line): array => [$line['uuid'] => $line['label']])->all();
     }
 
-    public function selectedLineLabel(?User $actor, string $kind, mixed $order, mixed $line): ?string
+    public function selectedLineLabel(?User $actor, string $kind, mixed $order, mixed $line, ?array $selectedLines = null): ?string
     {
-        return $this->lineDetail($actor, $kind, $order, $line)['label'] ?? null;
+        return $this->lineDetail($actor, $kind, $order, $line, $selectedLines)['label'] ?? null;
     }
 
-    public function lineDetail(?User $actor, string $kind, mixed $order, mixed $line): array
+    public function lineDetail(?User $actor, string $kind, mixed $order, mixed $line, ?array $selectedLines = null): array
     {
-        if ($line === null || $line === '') {
+        if (! is_scalar($line) || $line === '') {
             return [];
         }
 
-        return array_values($this->lineDetails($actor, $kind, $order, $line))[0] ?? [];
+        if ($selectedLines === null) {
+            return array_values($this->lineDetails($actor, $kind, $order, $line))[0] ?? [];
+        }
+        $ids = array_values(array_unique(array_filter([...$selectedLines, $line], fn ($value): bool => is_scalar($value) && (ctype_digit((string) $value) || Str::isUuid((string) $value)))));
+        $details = $this->lineDetails($actor, $kind, $order, $ids);
+
+        return $details[$line] ?? collect($details)->first(fn (array $detail): bool => strcasecmp((string) $detail['uuid'], (string) $line) === 0) ?? [];
     }
 
     private function lineDetails(?User $actor, string $kind, mixed $orderValue, mixed $line = null, string $search = '', mixed $brandId = null, mixed $productId = null): array
@@ -140,6 +156,13 @@ class DocumentSelectors
         if ($order === null || ! in_array($kind, ['delivery', 'invoice', 'return'], true)) {
             return [];
         }
+
+        return RequestDisplayData::remember('document-line-details:'.json_encode([$actor?->id, $kind, $order->id, $line, $search, $brandId, $productId], JSON_THROW_ON_ERROR),
+            fn (): array => $this->readLineDetails($order, $kind, $line, $search, $brandId, $productId));
+    }
+
+    private function readLineDetails(Model $order, string $kind, mixed $line, string $search, mixed $brandId, mixed $productId): array
+    {
         $query = $kind === 'delivery' ? $order->items()->getQuery()
             : SalesDeliveryItem::where('sales_order_id', $order->id)->whereHas('salesDelivery', fn ($q) => $q->where('status', 'posted'));
         $variantPath = $kind === 'delivery' ? 'variant' : 'salesOrderItem.variant';
@@ -149,7 +172,14 @@ class DocumentSelectors
         if ($kind !== 'delivery') {
             $query->with('salesDelivery');
         }
-        if ($line !== null) {
+        if (is_array($line)) {
+            if (count($line) > 200) {
+                return [];
+            }
+            $query->where(fn (Builder $query): Builder => $query
+                ->whereIn('id', array_filter($line, fn ($value): bool => ctype_digit((string) $value)))
+                ->orWhereIn('uuid', array_filter($line, fn ($value): bool => Str::isUuid((string) $value))));
+        } elseif ($line !== null) {
             if (! is_scalar($line) || (! ctype_digit((string) $line) && ! Str::isUuid((string) $line))) {
                 return [];
             }
@@ -165,7 +195,7 @@ class DocumentSelectors
                 }
             });
         }
-        $rows = $query->orderBy('id')->limit($line === null ? 50 : 1)->get()->keyBy('id');
+        $rows = $query->orderBy('id')->limit($line === null ? 50 : (is_array($line) ? max(1, count($line)) : 1))->get()->keyBy('id');
         if ($rows->isEmpty()) {
             return [];
         }
@@ -224,19 +254,20 @@ class DocumentSelectors
     {
         foreach (['sales_order_id' => SalesOrder::class, 'purchase_order_id' => PurchaseOrder::class] as $field => $model) {
             if (isset($data[$field]) && is_string($data[$field]) && Str::isUuid($data[$field])) {
-                $data[$field] = (int) $model::where('uuid', $data[$field])->value('id');
+                $data[$field] = (int) $model::where('uuid', $data[$field])->without('documentNumber')->value('id');
             }
         }
         if (isset($data['items']) && is_array($data['items'])) {
-            foreach ($data['items'] as &$line) {
-                if (! is_array($line)) {
-                    continue;
-                }
-                foreach (['sales_order_item_id' => SalesOrderItem::class, 'sales_delivery_item_id' => SalesDeliveryItem::class] as $field => $model) {
-                    if (isset($line[$field]) && is_string($line[$field]) && Str::isUuid($line[$field])) {
-                        $line[$field] = (int) $model::where('uuid', $line[$field])->value('id');
+            foreach (['sales_order_item_id' => SalesOrderItem::class, 'sales_delivery_item_id' => SalesDeliveryItem::class] as $field => $model) {
+                $uuids = collect($data['items'])->filter(fn ($line): bool => is_array($line))
+                    ->pluck($field)->filter(fn ($value): bool => is_string($value) && Str::isUuid($value))->unique()->values()->all();
+                $identities = $uuids === [] ? collect() : $model::whereIn('uuid', $uuids)->pluck('id', 'uuid')->mapWithKeys(fn ($id, string $uuid): array => [strtolower($uuid) => $id]);
+                foreach ($data['items'] as &$line) {
+                    if (is_array($line) && isset($line[$field]) && is_string($line[$field]) && Str::isUuid($line[$field])) {
+                        $line[$field] = (int) $identities->get(strtolower($line[$field]), 0);
                     }
                 }
+                unset($line);
             }
         }
 

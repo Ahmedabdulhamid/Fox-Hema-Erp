@@ -16,6 +16,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PurchaseOrderResource extends Resource
 {
@@ -44,7 +45,7 @@ class PurchaseOrderResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return app(PurchasingAccess::class)->scopeOrders(parent::getEloquentQuery(), auth()->user())->with(['items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'location']);
+        return app(PurchasingAccess::class)->scopeOrders(parent::getEloquentQuery(), auth()->user())->with(['items' => fn (HasMany $items): HasMany => $items->chaperone('purchaseOrder'), 'items.variant.images', 'items.variant.color', 'items.variant.size', 'items.variant.product.brand', 'items.variant.product.images', 'supplier', 'location']);
     }
 
     public static function form(Schema $schema): Schema

@@ -81,7 +81,7 @@ class SizeAllocationResource extends Resource
         return $schema->components([
             View::make('components.size-allocation-workflow')->viewData($context),
             Section::make(__('Allocation context'))->description(__('Choose the brand, product and source stock before distributing quantities.'))
-                ->extraAttributes(['class' => 'allocation-selectors'])->columns(['default' => 1, 'md' => 2, 'xl' => 4])->schema([
+                ->extraAttributes(['class' => 'allocation-selectors'])->columns(['default' => 1, 'md' => 2, 'xl' => 5])->schema([
                     Select::make('brand_id')->label('1. '.__('Brand'))->required()->searchable()->preload()->live()->dehydrated(false)
                         ->default(fn (): ?string => isset($presentation->brands(auth()->user())['none']) ? 'none' : null)
                         ->placeholder(__('Select Brand'))
@@ -94,7 +94,8 @@ class SizeAllocationResource extends Resource
                         ->disabledOn('edit')->afterStateUpdated(function (Set $set): void {
                             $set('product_id', null);
                             $set('location_id', null);
-                            $set('allocation_color', null);
+                            $set('allocation_colors', []);
+                            $set('allocation_sizes', []);
                             $set('items', []);
                         }),
                     Select::make('product_id')->label('2. '.__('Product'))->required()->searchable()->preload()->live()
@@ -103,27 +104,33 @@ class SizeAllocationResource extends Resource
                         ->getSearchResultsUsing(fn (Get $get, string $search, ?SizeAllocation $record): array => $presentation->productOptions(auth()->user(), $get('brand_id'), $search, $record))
                         ->getOptionLabelUsing(fn (Get $get, $value, ?SizeAllocation $record): ?string => $presentation->productLabel(auth()->user(), $get('brand_id'), $value, $record))
                         ->noOptionsMessage(__('No products with available unallocated stock for this brand.'))
-                        ->afterStateUpdated(function (Set $set, $state): void {
+                        ->afterStateUpdated(function (Set $set, Get $get, $state): void {
                             $set('location_id', null);
-                            $set('allocation_color', null);
-                            $set('items', self::grid($state));
+                            $items = self::grid($state);
+                            $set('allocation_colors', self::colorsFromGrid($items));
+                            $set('allocation_sizes', self::sizesFromGrid($items));
+                            $set('items', $items);
                         }),
-                    Select::make('allocation_color')->label('3. '.__('Color'))->searchable()->preload()->live()->dehydrated(false)
-                        ->placeholder(__('All colors'))->options(fn (Get $get, ?SizeAllocation $record): array => $presentation->colors(auth()->user(), $get('product_id'), $record))
+                    Select::make('allocation_colors')->label('3. '.__('Colors'))->multiple()->searchable()->preload()->live()->dehydrated(false)->allowHtml()
+                        ->placeholder(__('Select colors'))->options(fn (Get $get, ?SizeAllocation $record): array => $presentation->colors(auth()->user(), $get('product_id'), $record))
                         ->disabled(fn (Get $get, string $operation): bool => $operation === 'edit' || blank($get('product_id')))
-                        ->afterStateUpdated(fn (Set $set, Get $get, $state) => $set('items', self::grid($get('product_id'), $state))),
-                    Select::make('location_id')->label('4. '.__('Location'))->required()->searchable()->preload()->live()
+                        ->afterStateUpdated(fn (Set $set, Get $get, ?SizeAllocation $record) => $set('items', self::grid($get('product_id'), $get('allocation_colors') ?? [], $get('allocation_sizes') ?? [], $get('items') ?? [], $record))),
+                    Select::make('allocation_sizes')->label('4. '.__('Sizes'))->multiple()->searchable()->preload()->live()->dehydrated(false)
+                        ->placeholder(__('Select sizes'))->options(fn (Get $get, ?SizeAllocation $record): array => $presentation->sizes(auth()->user(), $get('product_id'), $record))
+                        ->disabled(fn (Get $get, string $operation): bool => $operation === 'edit' || blank($get('product_id')))
+                        ->afterStateUpdated(fn (Set $set, Get $get, ?SizeAllocation $record) => $set('items', self::grid($get('product_id'), $get('allocation_colors') ?? [], $get('allocation_sizes') ?? [], $get('items') ?? [], $record))),
+                    Select::make('location_id')->label('5. '.__('Location'))->required()->searchable()->preload()->live()
                         ->placeholder(__('Select source location'))->default(fn () => getPermissionsTeamId())
                         ->options(fn (Get $get, ?SizeAllocation $record): array => $presentation->locations(auth()->user(), $get('product_id'), $record))
                         ->getSearchResultsUsing(fn (Get $get, string $search, ?SizeAllocation $record): array => $presentation->locations(auth()->user(), $get('product_id'), $record, $search))
                         ->getOptionLabelUsing(fn (Get $get, $value, ?SizeAllocation $record): ?string => $presentation->locations(auth()->user(), $get('product_id'), $record, selectedId: $value)[$value] ?? null)
                         ->disabled(fn (Get $get, string $operation): bool => $operation === 'edit' || blank($get('product_id')))->dehydrated()
                         ->noOptionsMessage(__('No available unallocated stock at your authorized locations.'))
-                        ->afterStateUpdated(fn (Set $set, Get $get) => $set('items', self::grid($get('product_id'), $get('allocation_color')))),
+                        ->afterStateUpdated(fn (Set $set, Get $get, ?SizeAllocation $record) => $set('items', self::grid($get('product_id'), $get('allocation_colors') ?? [], $get('allocation_sizes') ?? [], $get('items') ?? [], $record))),
                 ]),
             View::make('components.size-allocation-stock')->viewData($context),
             Grid::make(['default' => 1, 'lg' => 12])->extraAttributes(['class' => 'allocation-workspace'])->schema([
-                Section::make(__('Allocate quantities by size'))->description(__('Enter whole pieces. Existing size and color identities are preserved.'))
+                Section::make(__('Allocate quantities by size'))->description(__('Select existing colors and sizes, then enter whole-piece quantities for each combination.'))
                     ->extraAttributes(['class' => 'allocation-grid-card'])->columnSpan(['default' => 1, 'lg' => 8])->schema([
                         Repeater::make('items')->hiddenLabel()->defaultItems(0)->minItems(1)->maxItems(99)->reorderable(false)->live()->addable(false)->deletable(false)
                             ->rules([fn (Get $get, ?SizeAllocation $record): \Closure => function (string $attribute, mixed $value, \Closure $fail) use ($get, $record, $presentation): void {
@@ -136,16 +143,18 @@ class SizeAllocationResource extends Resource
                                     $fail(__('Choose eligible source stock and enter positive whole-piece quantities.'));
                                 }
                             }])
-                            ->table([TableColumn::make(__('Size')), TableColumn::make(__('Allocate pieces')), TableColumn::make(__('Current available stock')), TableColumn::make(__('Quantity after allocation'))])
+                            ->table([TableColumn::make(__('Color / Size')), TableColumn::make(__('Allocate pieces')), TableColumn::make(__('Current available stock')), TableColumn::make(__('Quantity after allocation'))])
                             ->schema([
-                                Hidden::make('variant_id')->required()->hidden()->dehydratedWhenHidden(),
+                                Hidden::make('variant_id')->nullable()->hidden()->dehydratedWhenHidden(),
+                                Hidden::make('size_id')->required()->hidden()->dehydratedWhenHidden(),
+                                Hidden::make('color_id')->nullable()->hidden()->dehydratedWhenHidden(),
                                 TextEntry::make('size_display')->hiddenLabel()->state('variant')->formatStateUsing(fn (Get $get, ?SizeAllocation $record) => view('components.allocation-variant', ['variant' => self::presentationVariants($get, $record)->get($get('variant_id')), 'colorName' => $get('color_label'), 'sizeName' => $get('size_label')])),
                                 TextInput::make('quantity')->hiddenLabel()->required()->numeric()->minValue(0)->step(1)->inputMode('numeric')->live(debounce: 300)
                                     ->rules(['regex:/^\d{1,14}(?:\.0{1,4})?$/D'])
-                                    ->prefixAction(Action::make('decrease')->label(__('Decrease quantity'))->icon('heroicon-m-minus')
-                                        ->action(fn (Get $get, Set $set) => $set('quantity', self::changeQuantity($get('quantity'), -1))))
-                                    ->suffixAction(Action::make('increase')->label(__('Increase quantity'))->icon('heroicon-m-plus')
-                                        ->action(fn (Get $get, Set $set) => $set('quantity', self::changeQuantity($get('quantity'), 1)))),
+                                    ->prefixAction(fn (): Action => Action::make('decrease')->label(__('Decrease quantity'))->icon('heroicon-m-minus')
+                                        ->action(fn (TextInput $component, Get $get, Set $set) => $set($component, self::changeQuantity($get($component), -1))))
+                                    ->suffixAction(fn (): Action => Action::make('increase')->label(__('Increase quantity'))->icon('heroicon-m-plus')
+                                        ->action(fn (TextInput $component, Get $get, Set $set) => $set($component, self::changeQuantity($get($component), 1)))),
                                 TextEntry::make('target_available')->hiddenLabel()->state(fn (Get $get): string => QuantityFormatter::format(self::balance($get('variant_id'), $get('../../location_id'))?->quantity_available ?? '0')),
                                 TextEntry::make('target_after')->hiddenLabel()->state(function (Get $get): string {
                                     $quantity = (string) ($get('quantity') ?? '');
@@ -155,7 +164,9 @@ class SizeAllocationResource extends Resource
                                 }),
                             ]),
                         Textarea::make('notes')->label(__('Notes / reference'))->rows(2)->maxLength(10000),
-                        Text::make(__('Missing sizes can be created in Products → Variants using the existing size catalog.')),
+                        Text::make(__('Selected combinations are created as variants when this draft is saved. Stock moves only when the allocation is posted.')),
+                        Text::make(__('Selection exceeds the 99-combination allocation limit. Reduce selected colors or sizes.'))
+                            ->visible(fn (Get $get): bool => self::combinationLimitExceeded($get)),
                     ]),
                 View::make('components.size-allocation-summary')->viewData($context)->columnSpan(['default' => 1, 'lg' => 4]),
             ]),
@@ -196,9 +207,29 @@ class SizeAllocationResource extends Resource
         return request()->attributes->get($key);
     }
 
-    public static function grid(mixed $productId, mixed $colorId = null): array
+    public static function grid(
+        mixed $productId,
+        ?array $colorIds = null,
+        ?array $sizeIds = null,
+        array $currentItems = [],
+        ?SizeAllocation $record = null,
+    ): array {
+        return app(SizeAllocationPresentation::class)->grid(auth()->user(), $productId, $colorIds, $sizeIds, $currentItems, $record);
+    }
+
+    public static function colorsFromGrid(array $items): array
     {
-        return app(SizeAllocationPresentation::class)->grid(auth()->user(), $productId, $colorId);
+        return collect($items)->pluck('color_id')->map(fn ($id) => $id === null ? 'none' : (string) $id)->unique()->values()->all();
+    }
+
+    public static function sizesFromGrid(array $items): array
+    {
+        return collect($items)->pluck('size_id')->map(fn ($id): string => (string) $id)->unique()->values()->all();
+    }
+
+    private static function combinationLimitExceeded(Get $get): bool
+    {
+        return count($get('allocation_colors') ?? []) * count($get('allocation_sizes') ?? []) > 99;
     }
 
     public static function infolist(Schema $schema): Schema

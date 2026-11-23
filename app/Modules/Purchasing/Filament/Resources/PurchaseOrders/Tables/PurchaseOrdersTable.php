@@ -2,6 +2,8 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Tables;
 
+use App\Filament\ReadModelCache;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\PurchaseOrderResource;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Services\PurchaseOrderService;
@@ -30,20 +32,33 @@ class PurchaseOrdersTable
 
     public static function configure(Table $table): Table
     {
+        $statusOptions = self::statuses();
+
         return $table->columns([
             TextColumn::make('order_number')->label(__('PO number'))->formatStateUsing(fn ($record): string => $record->display_reference)->searchable()->sortable(),
             TextColumn::make('supplier.name')->label(__('Supplier'))->searchable()->sortable(),
             TextColumn::make('location.name')->label(__('Location'))->sortable(),
             TextColumn::make('order_date')->label(__('Order date'))->date()->sortable(),
             TextColumn::make('expected_date')->label(__('Expected delivery date'))->date()->sortable(),
-            TextColumn::make('status')->label(__('Status'))->badge()->sortable()->formatStateUsing(fn (string $state): string => self::statuses()[$state] ?? $state),
+            TextColumn::make('status')->label(__('Status'))->badge()->sortable()->formatStateUsing(fn (string $state): string => $statusOptions[$state] ?? $state),
             TextColumn::make('total_amount')->label(__('Total (EGP)'))->sortable(),
         ])->filters([
-            SelectFilter::make('status')->label(__('Status'))->options(self::statuses()),
-            SelectFilter::make('supplier_id')->label(__('Supplier'))->searchable()->options(fn (): array => app(PurchaseOrderService::class)->suppliers(auth()->user(), false)->pluck('name', 'id')->all()),
+            SelectFilter::make('status')->label(__('Status'))->options($statusOptions),
+            SelectFilter::make('supplier_id')->label(__('Supplier'))->searchable()->options(fn (): array => app(ReadModelCache::class)->options('suppliers', app(PurchaseOrderService::class)->suppliers(auth()->user(), false))),
             SelectFilter::make('location_id')->label(__('Location'))->options(fn (): array => app(PurchasingAccess::class)->locations(auth()->user())->pluck('name', 'id')->all()),
             self::dates(),
-        ])->recordActions([ViewAction::make(), EditAction::make(), ...self::lifecycleActions()])
+        ])->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items')->withExists([
+            'receipts as has_active_receipts' => fn (Builder $receipts): Builder => $receipts->where('status', '!=', 'cancelled'),
+            'receiptItems as has_posted_receipt_items' => fn (Builder $items): Builder => $items->whereNotNull('stock_movement_id'),
+            'vendorBills as has_vendor_bills',
+        ])->afterQuery(function ($records): void {
+            foreach ($records as $record) {
+                if ($record instanceof PurchaseOrder) {
+                    RequestAuthorizationFacts::readFacts('purchase-order-cancellation-history:'.$record->id,
+                        fn (): array => [(int) $record->has_active_receipts, (int) $record->has_posted_receipt_items, (int) $record->has_vendor_bills]);
+                }
+            }
+        }))->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), ...self::lifecycleActions()])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 

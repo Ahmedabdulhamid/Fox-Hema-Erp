@@ -75,6 +75,7 @@ class ProductVariantManager
                 $this->invalid('is_active', 'An active product must retain an active variant.');
             }
             $variant->save();
+            app(ProductCommercialEligibility::class)->refresh($product);
 
             return $variant;
         });
@@ -134,8 +135,10 @@ class ProductVariantManager
             foreach ($variant->images()->get() as $image) {
                 app(ProductImageManager::class)->removeRecord($image);
             }
+            $deleted = (bool) $variant->delete();
+            app(ProductCommercialEligibility::class)->refresh($product);
 
-            return (bool) $variant->delete();
+            return $deleted;
         });
     }
 

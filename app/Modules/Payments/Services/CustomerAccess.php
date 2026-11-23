@@ -4,9 +4,9 @@ namespace App\Modules\Payments\Services;
 
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -19,10 +19,10 @@ class CustomerAccess
 
     public function ready(): bool
     {
-        return $this->schemaReady ??= Schema::hasTable('payment_customers')
-            && Schema::hasTable('customer_invoice_accounts')
-            && Schema::hasColumn('payments', 'treasury_account_id')
-            && Schema::hasColumn('payment_refunds', 'recovery_operation_id');
+        return $this->schemaReady ??= RequestAuthorizationFacts::tableExists('payment_customers')
+            && RequestAuthorizationFacts::tableExists('customer_invoice_accounts')
+            && RequestAuthorizationFacts::columnExists('payments', 'treasury_account_id')
+            && RequestAuthorizationFacts::columnExists('payment_refunds', 'recovery_operation_id');
     }
 
     public function requireReady(): void

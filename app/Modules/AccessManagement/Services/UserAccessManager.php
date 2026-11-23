@@ -2,6 +2,7 @@
 
 namespace App\Modules\AccessManagement\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Permission;
 use App\Modules\AccessManagement\Models\Role;
@@ -34,7 +35,11 @@ class UserAccessManager
 
     public function formData(User $user, array $data): array
     {
-        $data['location_ids'] = $user->locations()->pluck('locations.id')->all();
+        $locations = $user->locations();
+        if (! auth()->user()->isGlobalSuperAdmin()) {
+            $locations->whereIn('locations.id', auth()->user()->locations()->select('locations.id'));
+        }
+        $data['location_ids'] = $locations->pluck('locations.id')->all();
         $locationId = getPermissionsTeamId();
         if (auth()->user()->isGlobalSuperAdmin() && ! in_array($locationId, $data['location_ids'])) {
             $locationId = $user->locations()->where('is_active', true)->value('locations.id');
@@ -87,6 +92,9 @@ class UserAccessManager
                 $user->unsetRelation('roles')->unsetRelation('permissions');
                 $user->syncRoles($roleIds);
                 $user->syncPermissions($permissionIds);
+                if ($changed) {
+                    app(ReadModelCache::class)->invalidateAfterCommit('access');
+                }
             } finally {
                 app(PermissionRegistrar::class)->setPermissionsTeamId($originalScope);
                 $user->unsetRelation('roles')->unsetRelation('permissions');

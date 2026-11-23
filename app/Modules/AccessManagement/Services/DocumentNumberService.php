@@ -33,7 +33,12 @@ class DocumentNumberService
         $connection = DB::connection();
         $key = $connection->getName().':'.$connection->getDatabaseName();
 
-        return $this->installedConnections[$key] ??= Schema::hasTable('document_numbers');
+        return $this->installedConnections[$key] ??= RequestAuthorizationFacts::tableExists('document_numbers');
+    }
+
+    public function resetInstalledCache(): void
+    {
+        $this->installedConnections = [];
     }
 
     public const SOURCES = [
@@ -44,6 +49,7 @@ class DocumentNumberService
         'SM' => ['stock_movements', 'uuid'], 'SA' => ['inventory_size_allocations', 'reference'],
         'QC' => ['quarantine_receipts', 'uuid'],
         'CN' => ['sales_credit_notes', 'credit_note_number'],
+        'POS' => ['pos_devices', 'device_code'], 'SH' => ['pos_sessions', 'session_number'],
     ];
 
     /** Allocate inside the owning document transaction, after its authorization and replay checks. */

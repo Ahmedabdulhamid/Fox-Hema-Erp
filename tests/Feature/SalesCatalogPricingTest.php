@@ -49,6 +49,26 @@ class SalesCatalogPricingTest extends TestCase
         $this->assertSame('10.6145', $this->price(['quantity' => '1'])['line_total']);
     }
 
+    public function test_fixed_discount_and_tax_are_per_line_and_percentage_tax_uses_the_discounted_basis(): void
+    {
+        $discount = Discount::factory()->create(['type' => 'fixed', 'value' => '5.0000']);
+        $fixedTax = Tax::factory()->create(['type' => 'fixed', 'rate' => '2.5000']);
+        $percentageTax = Tax::factory()->create(['type' => 'percentage', 'rate' => '14.0000']);
+
+        $line = $this->price(['discount_id' => $discount->id, 'tax_ids' => [$fixedTax->id, $percentageTax->id]]);
+        $singleUnit = $this->price(['quantity' => '1', 'discount_id' => $discount->id, 'tax_ids' => [$fixedTax->id, $percentageTax->id]]);
+
+        $this->assertSame('5.0000', $line['discount_amount']);
+        $this->assertSame('6.0518', $line['tax_amount']);
+        $this->assertSame('31.4220', $line['line_total']);
+        $this->assertSame('5.0000', $singleUnit['discount_amount']);
+        $this->assertSame('3.2173', $singleUnit['tax_amount']);
+        $this->assertSame('8.3407', $singleUnit['line_total']);
+        $this->assertSame('2.5000', $line['commercial_snapshot']['taxes'][0]['amount']);
+        $this->assertNull($line['commercial_snapshot']['taxes'][0]['basis']);
+        $this->assertSame('excluded-fixed-line-amounts-and-percentages-after-discount-half-up-4', $line['commercial_snapshot']['policy']);
+    }
+
     public function test_inactive_expired_future_purchase_only_taxes_and_order_discounts_are_ineligible(): void
     {
         foreach ([['is_active' => false], ['effective_to' => now()->subDay()->toDateString()],
@@ -92,8 +112,7 @@ class SalesCatalogPricingTest extends TestCase
 
     public static function unsupportedDefinitions(): array
     {
-        return [['tax', ['type' => 'fixed']], ['tax', ['price_inclusion' => 'included']],
-            ['discount', ['type' => 'fixed']], ['discount', ['is_stackable' => true]]];
+        return [['tax', ['price_inclusion' => 'included']], ['discount', ['is_stackable' => true]]];
     }
 
     #[DataProvider('unsupportedDefinitions')]
@@ -114,5 +133,14 @@ class SalesCatalogPricingTest extends TestCase
         $this->variant->product->taxes()->attach(Tax::factory()->create(['rate' => '14']));
         $this->assertSame('0.0000', $this->price()['line_total']);
         $this->assertSame('0.0000', $this->price()['tax_amount']);
+    }
+
+    public function test_fixed_discount_cannot_exceed_the_line_subtotal(): void
+    {
+        $discount = Discount::factory()->create(['type' => 'fixed', 'value' => '30.3703']);
+        $this->variant->product->discounts()->attach($discount);
+
+        $this->expectException(ValidationException::class);
+        $this->price(['discount_id' => $discount->id]);
     }
 }

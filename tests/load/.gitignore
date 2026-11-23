@@ -1,0 +1,6 @@
+data/test-users.json
+reports/*
+reports-*-summary.json
+reports-*-summary.txt
+*.log
+*.tmp

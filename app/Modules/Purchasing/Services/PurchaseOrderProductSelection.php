@@ -2,6 +2,7 @@
 
 namespace App\Modules\Purchasing\Services;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
@@ -18,12 +19,16 @@ class PurchaseOrderProductSelection
             return $query->whereRaw('1 = 0');
         }
 
-        return $activeOnly ? $query->where('is_active', true)->where('status', 'active') : $query;
+        return $activeOnly ? $query->where('status', 'active')->where(function (Builder $query): void {
+            $query->where('is_active', true)->orWhereDoesntHave('variants');
+        }) : $query;
     }
 
     public function managesSizes(Product $product): bool
     {
-        return $product->variants()->where(fn (Builder $query) => $query->whereNotNull('size_id')->orWhereNotNull('unallocated_product_id'))->exists();
+        return RequestDisplayData::remember('purchase-product-sizes:'.$product->id,
+            fn (): bool => ! $product->variants()->exists()
+                || $product->variants()->where(fn (Builder $query) => $query->whereNotNull('size_id')->orWhereNotNull('unallocated_product_id'))->exists());
     }
 
     /** Resolve form metadata inside the purchase order transaction before persisting inventory identity. */
@@ -68,7 +73,15 @@ class PurchaseOrderProductSelection
 
     public function formState(ProductVariant $variant): array
     {
-        return ['product_id' => $variant->product_id, 'receiving_mode' => $variant->isUnallocated() ? 'unknown' : ($this->managesSizes($variant->product) ? 'known' : 'standard')];
+        $mode = 'unknown';
+        if (! $variant->isUnallocated()) {
+            $product = $variant->product;
+            $managesSizes = array_key_exists('form_manages_sizes', $product->getAttributes())
+                ? (bool) $product->form_manages_sizes : $this->managesSizes($product);
+            $mode = $managesSizes ? 'known' : 'standard';
+        }
+
+        return ['product_id' => $variant->product_id, 'receiving_mode' => $mode];
     }
 
     private function invalid(string $field, string $message): never

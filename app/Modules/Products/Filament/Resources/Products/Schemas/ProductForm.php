@@ -2,6 +2,9 @@
 
 namespace App\Modules\Products\Filament\Resources\Products\Schemas;
 
+use App\Filament\ReadModelCache;
+use App\Modules\Products\Models\Brand;
+use App\Modules\Products\Models\Category;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Services\ProductAssignmentManager;
 use App\Modules\Products\Services\ProductsAccess;
@@ -31,10 +34,9 @@ class ProductForm
                     Grid::make(['default' => 1, 'lg' => 3])->schema([
                         Section::make(__('Catalog information'))->icon('heroicon-o-book-open')->columns(2)->columnSpan(['default' => 1, 'lg' => 2])->schema([
                             TextInput::make('name')->label(__('Product name'))->required()->maxLength(255)->columnSpanFull(),
-                            Select::make('brand_id')->label(__('Brand'))->relationship('brand', 'name')->searchable()->preload(),
-                            Select::make('category_id')->label(__('Product category'))->relationship('category', 'name')->searchable()->preload()->live(),
+                            Select::make('brand_id')->label(__('Brand'))->relationship('brand', 'name')->searchable()->preload()->options(fn (): array => app(ReadModelCache::class)->options('catalog', Brand::query()->orderBy('name')->limit(50))),
+                            Select::make('category_id')->label(__('Product category'))->relationship('category', 'name')->searchable()->preload()->live()->options(fn (): array => app(ReadModelCache::class)->options('catalog', Category::query()->orderBy('name')->limit(50))),
                             Select::make('status')->label(__('Status'))->options(['draft' => __('Draft'), 'active' => __('Active'), 'archived' => __('Archived')])->default('draft')->required()->live(),
-                            Toggle::make('is_active')->label(__('Available for business operations'))->default(false)->disabled(fn (?Product $record): bool => $record === null)->dehydrated(fn (?Product $record): bool => $record !== null)->helperText(__('Choose the product status freely. Business availability requires Active status and a valid active variant.')),
                         ]),
                         Section::make(__('Product preview'))->icon('heroicon-o-eye')->columnSpan(['default' => 1, 'lg' => 1])->schema([
                             ImageEntry::make('preview_image')->hiddenLabel()->disk('public')->height(200)

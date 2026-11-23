@@ -1,0 +1,9 @@
+{
+  "users": [
+    {
+      "email": "dedicated-load-test-user@example.invalid",
+      "passwordEnvironment": "LOAD_TEST_PASSWORD",
+      "notes": "Placeholder only. Use a dedicated non-administrator test account if that accurately represents the workload."
+    }
+  ]
+}

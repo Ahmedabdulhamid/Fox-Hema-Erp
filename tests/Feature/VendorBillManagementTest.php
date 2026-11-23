@@ -7,14 +7,17 @@ use App\Modules\AccessManagement\Database\Seeders\AccessManagementSeeder;
 use App\Modules\AccessManagement\Models\AuthEvent;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Module;
+use App\Modules\AccessManagement\Models\Permission;
 use App\Modules\AccessManagement\Models\Role;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\LocationContext;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryStandardCostRevision;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\Products\Models\Category;
+use App\Modules\Products\Models\Color;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Models\Size;
@@ -37,6 +40,7 @@ use App\Modules\Purchasing\Services\VendorBillService;
 use App\Modules\Taxes\Models\Tax;
 use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Gate;
@@ -225,6 +229,157 @@ class VendorBillManagementTest extends TestCase
         return $this->bills->post($this->actor, $bill, $this->bills->revision($bill));
     }
 
+    public static function queryDocumentSizes(): array
+    {
+        return ['small' => [1], 'ten' => [10], 'large' => [20], 'fifty' => [50], 'hundred' => [100], 'restricted-small' => [1, true]];
+    }
+
+    #[DataProvider('queryDocumentSizes')]
+    public function test_bill_query_growth_preserves_receipt_usage_labels_and_revision_bytes(int $lineCount, bool $restricted = false): void
+    {
+        $variants = collect(range(1, $lineCount))->map(fn (int $index): ProductVariant => ProductVariant::factory()->create([
+            'product_id' => $this->variant->product_id,
+            'color_id' => Color::factory()->create()->id,
+            'size_id' => Size::factory()->create()->id,
+        ]));
+        $order = $this->orders->create($this->actor, ['supplier_id' => $this->supplier->id, 'location_id' => $this->location->id,
+            'order_date' => '2026-10-14', 'items' => $variants->map(fn (ProductVariant $variant): array => [
+                'variant_id' => $variant->id, 'quantity' => '3', 'unit_price' => '190'])->all()], (string) Str::uuid7());
+        $order = $this->orders->confirm($this->actor, $order, $this->orders->revision($order));
+        $postedReceipts = [];
+        foreach (['1', '2'] as $quantity) {
+            $receipt = $order->receipts()->where('status', 'draft')->firstOrFail();
+            $receipt = $this->receipts->update($this->actor, $receipt, ['items' => $receipt->items()->orderBy('id')->get()->map(fn ($item): array => [
+                'id' => $item->id, 'quantity' => $quantity, 'unit_cost' => '200'])->all()], $this->receipts->revision($receipt));
+            $postedReceipts[] = $this->receipts->post($this->actor, $receipt, $this->receipts->revision($receipt));
+        }
+        [$first, $second] = $postedReceipts;
+        $data = $this->bills->prefill($this->actor, $order, $first) + ['bill_number' => 'QUERY-POSTED'];
+        $secondLines = $second->items()->with('purchaseOrderItem')->get()->keyBy(fn ($line): int => $line->purchaseOrderItem->variant_id);
+        foreach ($data['items'] as &$item) {
+            $item['quantity'] = '0.4444';
+            $item['allocations'][0]['quantity'] = '0.3333';
+            $item['allocations'][] = ['purchase_receipt_item_id' => $secondLines[$item['variant_id']]->id, 'quantity' => '0.1111'];
+        }
+        unset($item);
+        $posted = $this->postBill($this->bills->create($this->actor, $data));
+        $data['bill_number'] = 'QUERY-DRAFT';
+        $draft = $this->bills->create($this->actor, $data);
+        $data['bill_number'] = 'QUERY-CANCELLED';
+        $cancelled = $this->bills->create($this->actor, $data);
+        $this->bills->cancel($this->actor, $cancelled, $this->bills->revision($cancelled));
+        $before = $this->inventory();
+        $reader = $this->actor;
+        if ($restricted) {
+            $reader = User::factory()->create(['is_active' => true, 'must_change_password' => false]);
+            $reader->locations()->attach($this->location);
+            app(LocationContext::class)->setFor($reader, $this->location->id);
+            $role = Role::create(['name' => 'prefill-reader', 'guard_name' => 'web', 'location_id' => $this->location->id]);
+            $role->givePermissionTo([PurchasingPermissions::BILLS_VIEW, PurchasingPermissions::BILLS_CREATE, PurchasingPermissions::ORDERS_VIEW, PurchasingPermissions::RECEIPTS_VIEW]);
+            $reader->assignRole($role);
+            $this->actingAs($reader);
+        }
+        $tracing = false;
+        $trace = [];
+        DB::listen(function (QueryExecuted $query) use (&$tracing, &$trace): void {
+            if (! $tracing) {
+                return;
+            }
+            $frames = [];
+            foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
+                $file = str_replace('\\', '/', $frame['file'] ?? '');
+                if (str_starts_with($file, str_replace('\\', '/', app_path()).'/')) {
+                    $frames[] = substr($file, strlen(str_replace('\\', '/', base_path())) + 1).':'.$frame['line'].' '.($frame['class'] ?? '').($frame['type'] ?? '').$frame['function'];
+                }
+            }
+            $trace[] = ['sql' => $query->sql, 'bindings' => preg_match('/password|token|secret/i', $query->sql) ? ['[redacted]'] : $query->bindings,
+                'milliseconds' => $query->time, 'source' => $frames];
+        });
+        $measure = function (string $operation, callable $callback) use ($lineCount, $restricted, &$tracing, &$trace): array {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            $tracing = $operation === 'bill_prefill' && $lineCount === 1;
+            $memoryBefore = memory_get_usage();
+            $started = hrtime(true);
+            try {
+                $result = $callback();
+                $elapsed = (hrtime(true) - $started) / 1_000_000;
+                $memoryDelta = memory_get_usage() - $memoryBefore;
+                $queries = DB::getQueryLog();
+            } finally {
+                $tracing = false;
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+            $patterns = collect($queries)->map(fn (array $query): string => preg_replace('/\b\d+(?:,\s*\d+)*\b/', '#', $query['query']))->unique()->count();
+            $uniqueExecutions = collect($queries)->map(fn (array $query): string => json_encode([$query['query'], $query['bindings']], JSON_THROW_ON_ERROR))->unique()->count();
+            if ($operation === 'bill_prefill') {
+                fwrite(STDOUT, "\nPHASE2A1 ".json_encode(['actor' => $restricted ? 'restricted' : 'admin', 'lines' => $lineCount, 'queries' => count($queries), 'patterns' => $patterns,
+                    'duplicates' => count($queries) - $uniqueExecutions, 'database_ms' => array_sum(array_column($queries, 'time')),
+                    'service_ms' => $elapsed, 'memory_delta_bytes' => $memoryDelta, 'peak_bytes' => memory_get_peak_usage()], JSON_THROW_ON_ERROR)."\n");
+                if ($lineCount === 1) {
+                    $this->assertCount(count($queries), $trace);
+                    $groups = [];
+                    foreach ($trace as $index => $entry) {
+                        $key = json_encode([$entry['sql'], $entry['bindings']], JSON_THROW_ON_ERROR);
+                        $groups[$key] ??= $entry + ['ids' => []];
+                        $groups[$key]['ids'][] = $index + 1;
+                    }
+                    fwrite(STDOUT, $restricted ? "\nPHASE2A1_RESTRICTED_TRACE " : "\nPHASE2A1_TRACE ");
+                    fwrite(STDOUT, json_encode(array_values($groups), JSON_THROW_ON_ERROR)."\n");
+                }
+            }
+            fwrite(STDOUT, "\nPHASE2A ".json_encode(['operation' => $operation, 'lines' => $lineCount, 'queries' => count($queries),
+                'match_queries' => collect($queries)->filter(fn (array $query): bool => str_contains($query['query'], 'vendor_bill_receipt_matches'))->count()], JSON_THROW_ON_ERROR)."\n");
+            foreach ($queries as $query) {
+                $this->assertMatchesRegularExpression('/^select /i', $query['query']);
+                $this->assertStringNotContainsString('for update', $query['query']);
+            }
+
+            return [$result, $queries];
+        };
+        [$prefill, $prefillQueries] = $measure('bill_prefill', fn (): array => $this->bills->prefill($reader, $order, $first));
+        $this->assertLessThanOrEqual($restricted ? 18 : 12, count($prefillQueries));
+        $this->assertCount(count($prefillQueries), collect($prefillQueries)->unique(fn (array $query): string => json_encode([$query['query'], $query['bindings']], JSON_THROW_ON_ERROR)));
+        $this->assertCount(0, collect($prefillQueries)->filter(fn (array $query): bool => str_contains($query['query'], 'from `document_numbers`') || str_starts_with($query['query'], 'select * from `purchase_receipts`')));
+        $this->assertCount(1, collect($prefillQueries)->filter(fn (array $query): bool => str_contains($query['query'], 'vendor_bill_receipt_matches')));
+        $this->assertCount(2, collect($prefillQueries)->filter(fn (array $query): bool => str_contains($query['query'], 'from `colors`') || str_contains($query['query'], 'from `sizes`')));
+        $this->assertCount($lineCount, $prefill['items']);
+        foreach ($prefill['items'] as $item) {
+            $this->assertSame('0.6667', $item['quantity']);
+            $this->assertSame('0.0000', $item['tax_amount']);
+            $this->assertSame('0.0000', $item['discount_amount']);
+            $this->assertSame($variants->firstWhere('id', $item['variant_id'])->displayName(), $item['description']);
+        }
+        $all = $this->bills->prefill($reader, $order);
+        $this->assertCount(2 * $lineCount, $all['items']);
+        $this->assertSame('1.8889', $all['items'][$lineCount]['quantity']);
+        if ($lineCount === 100) {
+            foreach ($prefillQueries as $query) {
+                if (str_contains($query['query'], 'from `purchase_receipt_items`') || str_contains($query['query'], 'SUM(matched_quantity)')) {
+                    fwrite(STDOUT, "\nPHASE2A1_EXPLAIN ".json_encode(['sql' => $query['query'], 'bindings' => $query['bindings'],
+                        'plan' => DB::select('EXPLAIN '.$query['query'], $query['bindings'])], JSON_THROW_ON_ERROR)."\n");
+                }
+            }
+        }
+        $legacy = fn (VendorBill $bill): string => hash('sha256', json_encode([$bill->getAttributes(), $bill->items()->orderBy('id')->get()->map(fn ($item): array => [
+            $item->getAttributes(), $item->receiptMatches()->orderBy('id')->get()->map->getAttributes()->all(),
+        ])->all()], JSON_THROW_ON_ERROR));
+        $expected = $legacy($draft);
+        $draft->setRelation('items', collect());
+        [$revision, $revisionQueries] = $measure('bill_revision', fn (): string => $this->bills->revision($draft));
+        $this->assertSame($expected, $revision);
+        $this->assertSame($legacy($posted), $this->bills->revision($posted));
+        $this->assertCount(2, $revisionQueries);
+        $match = $draft->items()->firstOrFail()->receiptMatches()->orderBy('id')->firstOrFail();
+        $match->update(['matched_quantity' => '0.3332']);
+        $this->assertNotSame($revision, $this->bills->revision($draft));
+        $this->assertSame($legacy($draft), $this->bills->revision($draft));
+        $this->reject(fn () => $this->bills->post($this->actor, $draft, $revision));
+        $this->assertSame('draft', $draft->refresh()->status);
+        $this->assertSame($before, $this->inventory());
+    }
+
     private function reject(callable $operation, string $type = ValidationException::class): void
     {
         try {
@@ -235,6 +390,239 @@ class VendorBillManagementTest extends TestCase
             return;
         }
         $this->fail('Expected rejection.');
+    }
+
+    public function test_empty_bill_revision_preserves_original_serialization_with_one_read(): void
+    {
+        $bill = VendorBill::factory()->create(['supplier_id' => $this->supplier->id, 'created_by' => $this->actor->id]);
+        $expected = hash('sha256', json_encode([$bill->getAttributes(), []], JSON_THROW_ON_ERROR));
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $actual = $this->bills->revision($bill);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $this->assertSame($expected, $actual);
+        $this->assertCount(1, $queries);
+    }
+
+    public function test_prefill_existing_http_boundary_is_preserved_and_invalidates_after_write(): void
+    {
+        $this->variant->update(['color_id' => Color::factory()->create()->id, 'size_id' => Size::factory()->create()->id]);
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        RequestAuthorizationFacts::begin(request());
+        try {
+            $boundary = RequestAuthorizationFacts::readBoundary();
+            foreach (['cold', 'warm'] as $mode) {
+                DB::flushQueryLog();
+                DB::enableQueryLog();
+                try {
+                    $result = $this->bills->prefill($this->actor, $order, $receipt);
+                    $count = count(DB::getQueryLog());
+                } finally {
+                    DB::disableQueryLog();
+                    DB::flushQueryLog();
+                }
+                fwrite(STDOUT, "\nPHASE2A1_HTTP ".json_encode(['mode' => $mode, 'queries' => $count], JSON_THROW_ON_ERROR)."\n");
+                $this->assertSame($mode === 'cold' ? 12 : 7, $count);
+                $this->assertCount(1, $result['items']);
+                $this->assertSame($boundary, RequestAuthorizationFacts::readBoundary());
+            }
+            Module::where('code', 'purchasing')->update(['is_active' => false]);
+            $this->reject(fn () => $this->bills->prefill($this->actor, $receipt->purchaseOrder, $receipt), HttpException::class);
+        } finally {
+            RequestAuthorizationFacts::end(request());
+        }
+    }
+
+    public function test_prefill_empty_and_foreign_receipts_preserve_validation_errors(): void
+    {
+        $order = $this->order();
+        try {
+            $this->bills->prefill($this->actor, $order);
+            $this->fail('Unposted receipts must not be billable.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(['items' => [__('There are no posted receipt quantities available to bill.')]], $exception->errors());
+        }
+        $foreign = $this->receive($this->order(), '50');
+        try {
+            $this->bills->prefill($this->actor, $order, $foreign);
+            $this->fail('Foreign receipts must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(['receipt' => [__('Select a posted receipt belonging to this purchase order and location.')]], $exception->errors());
+        }
+    }
+
+    private function prefillReader(): User
+    {
+        $reader = User::factory()->create(['is_active' => true, 'must_change_password' => false]);
+        $reader->locations()->attach($this->location);
+        app(LocationContext::class)->setFor($reader, $this->location->id);
+        $reader->givePermissionTo([PurchasingPermissions::BILLS_VIEW, PurchasingPermissions::BILLS_CREATE,
+            PurchasingPermissions::ORDERS_VIEW, PurchasingPermissions::RECEIPTS_VIEW]);
+        $this->actingAs($reader);
+
+        return $reader;
+    }
+
+    public function test_fully_matched_prefill_does_not_need_label_models(): void
+    {
+        $this->variant->update(['color_id' => Color::factory()->create()->id, 'size_id' => Size::factory()->create()->id]);
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        $this->postBill($this->bills->create($this->actor, $this->data($receipt)));
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            try {
+                $this->bills->prefill($this->actor, $order, $receipt);
+                $this->fail('Fully matched receipts must not produce bill lines.');
+            } catch (ValidationException $exception) {
+                $this->assertSame(['items' => [__('There are no posted receipt quantities available to bill.')]], $exception->errors());
+            }
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        fwrite(STDOUT, "\nPHASE2A1_FULLY_MATCHED ".json_encode(['queries' => count($queries), 'label_queries' => collect($queries)->filter(
+            fn (array $query): bool => str_contains($query['query'], 'from `products`') || str_contains($query['query'], 'from `product_variants`')
+                || str_contains($query['query'], 'from `colors`') || str_contains($query['query'], 'from `sizes`'))->count()], JSON_THROW_ON_ERROR)."\n");
+        $this->assertCount(7, $queries);
+        $this->assertCount(0, collect($queries)->filter(fn (array $query): bool => str_contains($query['query'], 'from `purchase_order_items`')
+            || str_contains($query['query'], 'from `products`') || str_contains($query['query'], 'from `product_variants`')
+            || str_contains($query['query'], 'from `colors`') || str_contains($query['query'], 'from `sizes`')));
+    }
+
+    public function test_prefill_loads_labels_only_for_still_billable_order_lines(): void
+    {
+        $otherVariant = ProductVariant::factory()->create(['product_id' => $this->variant->product_id]);
+        $order = $this->orders->create($this->actor, ['supplier_id' => $this->supplier->id, 'location_id' => $this->location->id,
+            'order_date' => '2026-10-14', 'items' => collect([$this->variant, $otherVariant])->map(fn (ProductVariant $variant): array => [
+                'variant_id' => $variant->id, 'quantity' => '3', 'unit_price' => '190'])->all()], (string) Str::uuid7());
+        $order = $this->orders->confirm($this->actor, $order, $this->orders->revision($order));
+        $receipt = $order->receipts()->firstOrFail();
+        $receipt = $this->receipts->update($this->actor, $receipt, ['items' => $receipt->items()->get()->map(fn ($item): array => [
+            'id' => $item->id, 'quantity' => '3', 'unit_cost' => '200'])->all()], $this->receipts->revision($receipt));
+        $receipt = $this->receipts->post($this->actor, $receipt, $this->receipts->revision($receipt));
+        $data = $this->bills->prefill($this->actor, $order, $receipt) + ['bill_number' => 'FULL-FIRST'];
+        $data['items'] = [$data['items'][0]];
+        $this->postBill($this->bills->create($this->actor, $data));
+        $remainingLine = $receipt->items()->orderBy('id')->get()->last();
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $result = $this->bills->prefill($this->actor, $order, $receipt);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $orderLineQuery = collect($queries)->first(fn (array $query): bool => str_contains($query['query'], 'from `purchase_order_items`'))['query'];
+        fwrite(STDOUT, "\nPHASE2A1_PARTLY_MATCHED ".json_encode(['order_line_sql' => $orderLineQuery], JSON_THROW_ON_ERROR)."\n");
+        $this->assertCount(1, $result['items']);
+        $this->assertSame($otherVariant->id, $result['items'][0]['variant_id']);
+        $this->assertSame('3.0000', $result['items'][0]['quantity']);
+        $this->assertSame('600.0000', VendorBill::where('status', 'posted')->sole()->total_amount);
+        $this->assertStringContainsString('in ('.$remainingLine->purchase_order_item_id.')', $orderLineQuery);
+    }
+
+    public function test_prefill_keeps_every_gate_call_when_authorization_reads_are_reused(): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        $reader = $this->prefillReader();
+        $calls = [];
+        Gate::after(function (User $user, string $ability) use ($reader, &$calls): void {
+            if ($user->is($reader)) {
+                $calls[$ability] = ($calls[$ability] ?? 0) + 1;
+            }
+        });
+        $this->assertCount(1, $this->bills->prefill($reader, $order, $receipt)['items']);
+        $this->assertSame([PurchasingPermissions::BILLS_VIEW => 1, PurchasingPermissions::BILLS_CREATE => 1,
+            PurchasingPermissions::ORDERS_VIEW => 2, PurchasingPermissions::RECEIPTS_VIEW => 2], $calls);
+    }
+
+    public function test_prefill_checks_each_permission_again_after_revocation_between_calls(): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        $reader = $this->prefillReader();
+        foreach ([PurchasingPermissions::BILLS_VIEW, PurchasingPermissions::BILLS_CREATE,
+            PurchasingPermissions::ORDERS_VIEW, PurchasingPermissions::RECEIPTS_VIEW] as $permission) {
+            $this->assertCount(1, $this->bills->prefill($reader, $order, $receipt)['items']);
+            $reader->revokePermissionTo($permission);
+            $this->reject(fn () => $this->bills->prefill($reader, $order, $receipt), HttpException::class);
+            $this->assertFalse(request()->attributes->has('access_management.authorization_facts'));
+            $reader->givePermissionTo($permission);
+        }
+    }
+
+    public static function changedPrefillFacts(): array
+    {
+        return array_map(fn (string $change): array => [$change], ['actor', 'location', 'membership', 'team', 'mapping']);
+    }
+
+    #[DataProvider('changedPrefillFacts')]
+    public function test_prefill_rechecks_changed_authoritative_facts_between_calls(string $change): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        $reader = $this->prefillReader();
+        $this->assertCount(1, $this->bills->prefill($reader, $order, $receipt)['items']);
+        match ($change) {
+            'actor' => DB::table('users')->where('id', $reader->id)->update(['is_active' => false]),
+            'location' => DB::table('locations')->where('id', $this->location->id)->update(['is_active' => false]),
+            'membership' => $reader->locations()->detach($this->location),
+            'team' => setPermissionsTeamId(Location::create(['name' => 'Foreign prefill', 'type' => 'warehouse', 'is_active' => true])->id),
+            'mapping' => Module::where('code', 'taxes')->firstOrFail()->permissions()->attach(
+                Permission::where('name', PurchasingPermissions::RECEIPTS_VIEW)->firstOrFail()),
+        };
+        $this->reject(fn () => $this->bills->prefill($reader, $order, $receipt), HttpException::class);
+        $this->assertFalse(request()->attributes->has('access_management.authorization_facts'));
+    }
+
+    public function test_prefill_invalidates_facts_when_a_gate_callback_revokes_a_later_permission(): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        $reader = $this->prefillReader();
+        $revoked = false;
+        Gate::after(function (User $user, string $ability) use ($reader, &$revoked): void {
+            if ($user->is($reader) && $ability === PurchasingPermissions::ORDERS_VIEW && ! $revoked) {
+                $revoked = true;
+                $reader->revokePermissionTo(PurchasingPermissions::RECEIPTS_VIEW);
+            }
+        });
+        $this->reject(fn () => $this->bills->prefill($reader, $order, $receipt), HttpException::class);
+        $this->assertTrue($revoked);
+        $this->assertFalse(request()->attributes->has('access_management.authorization_facts'));
+    }
+
+    public function test_prefill_does_not_replace_an_existing_requests_nested_transaction_boundary(): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $order = $receipt->purchaseOrder;
+        RequestAuthorizationFacts::begin(request());
+        $state = request()->attributes->get('access_management.authorization_facts');
+        try {
+            DB::beginTransaction();
+            try {
+                $this->assertNull(RequestAuthorizationFacts::readBoundary());
+                $this->assertCount(1, $this->bills->prefill($this->actor, $order, $receipt)['items']);
+                $this->assertNull(RequestAuthorizationFacts::readBoundary());
+                $this->assertSame($state, request()->attributes->get('access_management.authorization_facts'));
+            } finally {
+                DB::rollBack();
+            }
+            $this->assertNotNull(RequestAuthorizationFacts::readBoundary());
+        } finally {
+            RequestAuthorizationFacts::end(request());
+        }
     }
 
     private function inventory(): array
@@ -524,6 +912,26 @@ class VendorBillManagementTest extends TestCase
         $this->reject(fn () => $this->bills->create($this->actor, $this->data($secondReceipt, '1', 'PART-D')));
     }
 
+    public function test_bill_commercial_terms_persist_and_revalidate_without_posting_payment(): void
+    {
+        $receipt = $this->receive($this->order(), '50');
+        $data = $this->data($receipt);
+        $data['settlement_terms'] = 'mixed';
+        $data['planned_immediate_amount'] = '4000';
+        $data['due_date'] = now()->addMonth()->toDateString();
+        $bill = $this->bills->create($this->actor, $data);
+        $this->assertSame('mixed', $bill->settlement_terms);
+        $this->assertSame('4000.0000', $bill->planned_immediate_amount);
+        $data['settlement_terms'] = 'credit';
+        $data['planned_immediate_amount'] = '0';
+        $bill = $this->bills->update($this->actor, $bill, $data, $this->bills->revision($bill));
+        $this->assertSame('credit', $bill->settlement_terms);
+        $bill = $this->postBill($bill);
+        $this->assertSame('credit', $bill->settlement_terms);
+        $this->assertDatabaseCount('vendor_payments', 0);
+        $this->reject(fn () => $bill->update(['planned_immediate_amount' => '1']));
+    }
+
     public function test_posting_failure_rolls_back_audit_and_status(): void
     {
         $receipt = $this->receive($this->order(), '50');
@@ -564,6 +972,7 @@ class VendorBillManagementTest extends TestCase
         $this->actingAs($user);
         $this->reject(fn () => $this->bills->post($user, $bill, $this->bills->revision($bill)), HttpException::class);
         $this->reject(fn () => $this->bills->create($user, $data), HttpException::class);
+        $this->reject(fn () => $this->bills->prefill($user, $receipt->purchaseOrder, $receipt), HttpException::class);
         $this->assertSame(0, VendorBillResource::getEloquentQuery()->count());
         $this->assertFalse(Gate::forUser($user)->allows('view', $bill));
     }

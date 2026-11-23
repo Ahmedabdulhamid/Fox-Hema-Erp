@@ -1,6 +1,11 @@
 <?php
 
 return [
+    'groups' => [
+        'AccessManagement' => 'Access Management',
+        'Backup & Restore' => 'Backup & Restore',
+        'Unmapped historical permissions' => 'Unmapped Historical Permissions',
+    ],
     'direct_notice' => 'These checkboxes manage direct permissions in the selected location. Permissions inherited from roles are managed separately above and are not checked here.',
     'role_notice' => 'Choose the permissions granted by this role.',
     'search' => 'Search modules or permissions…',

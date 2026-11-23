@@ -8,6 +8,7 @@ use App\Modules\AccessManagement\Services\LocationContext;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\AccessManagement\Services\SuperAdminProtection;
+use App\Modules\BackupRestore\Services\BackupAccess;
 use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryStandardCostRevision;
 use App\Modules\POS\Models\PosCashMovement;
@@ -46,7 +47,7 @@ class User extends Authenticatable implements FilamentUser
 {
     use HasPublicUuid;
 
-    public const PANEL_PERMISSIONS = ['users.view', 'roles.view', 'permissions.view', 'locations.view', 'sessions.view', 'auth_events.view', 'modules.view', 'products.view', 'products.brands.view', 'products.categories.view', 'products.sizes.view', 'products.colors.view', 'taxes.view', 'discounts.view', 'inventory.stock_balances.view', 'inventory.stock_movements.view', 'purchasing.suppliers.view', 'purchasing.purchase_orders.view', 'purchasing.receipts.view', 'purchasing.vendor_bills.view', 'purchasing.vendor_payments.view', 'payments.view', 'treasury.accounts.view', 'sales.orders.view', 'sales.deliveries.view'];
+    public const PANEL_PERMISSIONS = ['users.view', 'roles.view', 'permissions.view', 'locations.view', 'sessions.view', 'auth_events.view', 'modules.view', 'products.view', 'products.brands.view', 'products.categories.view', 'products.sizes.view', 'products.colors.view', 'taxes.view', 'discounts.view', 'inventory.stock_balances.view', 'inventory.stock_movements.view', 'stock_transfers.view', 'purchasing.suppliers.view', 'purchasing.purchase_orders.view', 'purchasing.receipts.view', 'purchasing.vendor_bills.view', 'purchasing.vendor_payments.view', 'payments.view', 'treasury.accounts.view', 'sales.orders.view', 'sales.deliveries.view'];
 
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, SoftDeletes;
@@ -213,7 +214,7 @@ class User extends Authenticatable implements FilamentUser
             ->whereNull('roles.location_id')
             ->where('roles.name', 'super_admin')
             ->where('roles.guard_name', 'web')
-            ->exists());
+            ->exists(), teamScoped: false);
     }
 
     public function canAccessPanel(Panel $panel): bool
@@ -223,6 +224,10 @@ class User extends Authenticatable implements FilamentUser
         }
 
         if ($this->isGlobalSuperAdmin()) {
+            return true;
+        }
+
+        if (app(BackupAccess::class)->allowsPanel($this)) {
             return true;
         }
 
@@ -239,6 +244,7 @@ class User extends Authenticatable implements FilamentUser
         }
 
         app(LocationContext::class)->clear();
+        session()->forget(LocationContext::SESSION_KEY);
         $this->unsetRelation('roles')->unsetRelation('permissions');
 
         return false;

@@ -2,19 +2,23 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesInvoices\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Modules\Payments\Filament\CustomerSettlementActions;
 use App\Modules\Payments\Models\CustomerInvoiceAccount;
 use App\Modules\Payments\Models\Payment;
+use App\Modules\Payments\Services\CustomerAccess;
 use App\Modules\Payments\Services\CustomerFinancials;
 use App\Modules\Payments\Services\PaymentsPermissions;
 use App\Modules\Products\Filament\MasterDetail;
+use App\Modules\Sales\Models\SalesInvoice;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\RepeatableEntry\TableColumn;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Collection;
 
 class SalesInvoiceInfolist
 {
@@ -58,15 +62,25 @@ class SalesInvoiceInfolist
             ]),
             TextEntry::make('customer_settlement')->label(__('payments.invoice_payments'))
                 ->visible(fn ($record) => CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id))
-                ->state(function ($record): string {
-                    $link = CustomerInvoiceAccount::where('sales_invoice_id', $record->id)->first();
-                    $summary = app(CustomerFinancials::class)->invoice(auth()->user(), $record);
+                ->state(function (SalesInvoice $record): string {
+                    abort_unless(CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id), 403);
 
-                    return ($link === null ? __('payments.walk_in') : $link->customer->code).' | '.__('Paid').': '.MoneyFormatter::format($summary['paid']).' | '.__('Outstanding').': '.MoneyFormatter::format($summary['outstanding']).' | '.__('payments.status.'.$summary['payment_status']);
+                    return RequestDisplayData::remember('sales.invoice-settlement-label.'.$record->getKey(), function () use ($record): string {
+                        $link = CustomerInvoiceAccount::with('customer')->where('sales_invoice_id', $record->id)->first();
+                        $summary = app(CustomerFinancials::class)->invoiceForDisplay(auth()->user(), $record);
+
+                        return ($link === null ? __('payments.walk_in') : $link->customer->code).' | '.__('Paid').': '.MoneyFormatter::format($summary['paid']).' | '.__('Outstanding').': '.MoneyFormatter::format($summary['outstanding']).' | '.__('payments.status.'.$summary['payment_status']);
+                    });
                 }),
             RepeatableEntry::make('invoice_payments')->label(__('payments.invoice_payments'))
                 ->visible(fn ($record) => CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id))
-                ->state(fn ($record) => Payment::whereHas('allocations', fn ($query) => $query->where('sales_invoice_id', $record->id))->where('status', 'posted')->with('paymentMethod')->withSum(['refunds as refunded_amount' => fn ($query) => $query->where('status', 'posted')->whereNull('recovered_at')], 'amount')->get())
+                ->state(function (SalesInvoice $record): Collection {
+                    app(CustomerAccess::class)->operation(auth()->user(), PaymentsPermissions::VIEW, (int) $record->location_id);
+
+                    return RequestDisplayData::remember('sales.invoice-payment-rows.'.$record->getKey(), fn (): Collection => Payment::whereHas('allocations', fn ($query) => $query->where('sales_invoice_id', $record->id))
+                        ->where('status', 'posted')->with('paymentMethod')
+                        ->withSum(['refunds as refunded_amount' => fn ($query) => $query->where('status', 'posted')->whereNull('recovered_at')], 'amount')->get());
+                })
                 ->schema([
                     TextEntry::make('payment_number')->label(__('payments.fields.payment_number')),
                     TextEntry::make('paymentMethod.name')->label(__('payments.fields.payment_method_id')),

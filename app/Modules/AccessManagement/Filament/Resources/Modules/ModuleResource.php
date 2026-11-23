@@ -43,11 +43,18 @@ class ModuleResource extends Resource
         return __('Modules');
     }
 
+    private static function translateValue(string $value): string
+    {
+        $translation = __($value);
+
+        return is_string($translation) ? $translation : $value;
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
             TextInput::make('code')->label(__('Code'))->disabled()->dehydrated(false),
-            TextInput::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => __($state))->disabled()->dehydrated(false),
+            TextInput::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => self::translateValue($state))->disabled()->dehydrated(false),
             TextInput::make('sort_order')->label(__('Sort order'))->numeric()->integer()->minValue(0)->maxValue(4294967295)->required(),
             Toggle::make('is_active')->label(__('Enabled'))
                 ->helperText(__('Inactive modules deny access to everyone, including Super Admins. Activation does not install required database tables.'))
@@ -59,14 +66,14 @@ class ModuleResource extends Resource
     {
         return $schema->components([
             Section::make(__('Module overview'))->icon('heroicon-o-squares-2x2')->columns(2)->columnSpanFull()->extraAttributes(['class' => 'fox-record-section'])->schema([
-                TextEntry::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => __($state))->weight('bold'),
+                TextEntry::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => self::translateValue($state))->weight('bold'),
                 TextEntry::make('code')->label(__('Code'))->copyable()->fontFamily('mono'),
                 TextEntry::make('is_active')->label(__('Status'))->badge()->color(fn (bool $state): string => $state ? 'success' : 'gray')->formatStateUsing(fn (bool $state): string => $state ? __('Enabled') : __('Disabled')),
                 TextEntry::make('sort_order')->label(__('Sort order')),
-                TextEntry::make('description')->label(__('Description'))->formatStateUsing(fn (?string $state): string => __($state ?? 'Not set'))->columnSpanFull(),
+                TextEntry::make('description')->label(__('Description'))->formatStateUsing(fn (?string $state): string => self::translateValue($state ?? 'Not set'))->columnSpanFull(),
             ]),
             Section::make(__('Permissions'))->icon('heroicon-o-key')->columnSpanFull()->schema([
-                TextEntry::make('permissions.name')->hiddenLabel()->formatStateUsing(fn (string $state): string => __($state))->badge()->color('info')->placeholder(__('No implemented permissions')),
+                TextEntry::make('permissions.name')->hiddenLabel()->formatStateUsing(fn (string $state): string => self::translateValue($state))->badge()->color('info')->placeholder(__('No implemented permissions')),
             ]),
         ]);
     }
@@ -74,7 +81,7 @@ class ModuleResource extends Resource
     public static function table(Table $table): Table
     {
         return $table->columns([
-            TextColumn::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => __($state))->searchable()->sortable(),
+            TextColumn::make('name')->label(__('Name'))->formatStateUsing(fn (string $state): string => self::translateValue($state))->searchable()->sortable(),
             TextColumn::make('code')->label(__('Code'))->searchable(),
             IconColumn::make('is_active')->boolean()->label(__('Enabled')),
             TextColumn::make('sort_order')->label(__('Sort order'))->sortable(),

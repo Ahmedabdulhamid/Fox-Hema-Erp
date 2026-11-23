@@ -2,12 +2,14 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\AuditLogger;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
+use App\Modules\Reporting\Services\SalesProjection;
 use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesInvoice;
 use App\Modules\Sales\Models\SalesInvoiceItem;
@@ -133,6 +135,7 @@ class SalesInvoiceService
             $invoice->refresh();
             DB::table('sales_invoices')->where('id', $invoice->id)->update(['posting_payload_hash' => $this->fingerprint($invoice)]);
             $this->audit($actor, $invoice, 'sales_invoice_posted');
+            app(SalesProjection::class)->request((int) $invoice->location_id, $invoice->invoice_date->toDateString());
 
             return $invoice->refresh()->load('items.deliveryMatches');
         }, 3);
@@ -188,17 +191,21 @@ class SalesInvoiceService
             return [];
         }
 
-        return SalesDeliveryItem::where('sales_order_id', $orderId)->when($only !== null, fn ($q) => $q->whereIn('id', $only))->whereHas('salesDelivery', fn ($query) => $query->where('status', 'posted'))
-            ->with(['salesDelivery', 'salesOrderItem.variant.product', 'salesOrderItem.variant.size', 'salesOrderItem.variant.color'])->orderBy('id')->get()->mapWithKeys(function ($item): array {
-                $used = $this->postedQuantity((int) $item->id);
-                $remaining = BigDecimal::of($item->quantity)->minus($used)->minus(app(SalesReturnInvoiceReconciliation::class)->unbilled((int) $item->id));
-                if ($remaining->isNegative()) {
-                    $this->invalid('Historical invoice quantities exceed delivered quantities.');
-                }
+        $items = SalesDeliveryItem::where('sales_order_id', $orderId)->when($only !== null, fn ($q) => $q->whereIn('id', $only))->whereHas('salesDelivery', fn ($query) => $query->where('status', 'posted'))
+            ->with(['salesDelivery', 'salesOrderItem.variant.product', 'salesOrderItem.variant.size', 'salesOrderItem.variant.color'])->orderBy('id')->get();
+        $postedQuantities = $this->postedQuantities($items->modelKeys());
+        $unbilledQuantities = app(SalesReturnInvoiceReconciliation::class)->unbilledQuantities($items->modelKeys());
 
-                return [$item->id => ['label' => $item->salesDelivery->display_reference.' | '.$item->salesOrderItem->variant?->displayName().' | #'.$item->id,
-                    'delivered' => $item->quantity, 'invoiced' => $used, 'remaining' => (string) $remaining]];
-            })->all();
+        return $items->mapWithKeys(function ($item) use ($postedQuantities, $unbilledQuantities): array {
+            $used = (string) BigDecimal::of($postedQuantities[$item->id] ?? '0')->toScale(4);
+            $remaining = BigDecimal::of($item->quantity)->minus($used)->minus($unbilledQuantities[$item->id] ?? '0');
+            if ($remaining->isNegative()) {
+                $this->invalid('Historical invoice quantities exceed delivered quantities.');
+            }
+
+            return [$item->id => ['label' => $item->salesDelivery->display_reference.' | '.$item->salesOrderItem->variant?->displayName().' | #'.$item->id,
+                'delivered' => $item->quantity, 'invoiced' => $used, 'remaining' => (string) $remaining]];
+        })->all();
     }
 
     private function validateInput(SalesOrder $order, array $data): array
@@ -236,6 +243,13 @@ class SalesInvoiceService
         $orderItems = $order->items()->with(['variant.product', 'variant.size', 'variant.color'])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $deliveries = $order->deliveries()->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $deliveryItems = SalesDeliveryItem::whereIn('sales_delivery_id', $deliveries->keys())->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $requestedItems = $deliveryItems->only(array_column($input, 'sales_delivery_item_id'));
+        $postedQuantities = $this->postedQuantities($requestedItems->modelKeys());
+        $unbilledQuantities = app(SalesReturnInvoiceReconciliation::class)->unbilledQuantities($requestedItems->modelKeys());
+        $history = SalesInvoiceItem::whereIn('sales_order_item_id', $requestedItems->pluck('sales_order_item_id')->unique())
+            ->whereHas('salesInvoice', fn ($query) => $query->where('status', 'posted'))
+            ->with(['deliveryMatches.salesDeliveryItem', 'salesInvoice'])->get()->groupBy('sales_order_item_id');
+        $fingerprints = [];
         $running = [];
         $lines = [];
         foreach ($input as $index => $inputLine) {
@@ -245,39 +259,36 @@ class SalesInvoiceService
             if ($delivery === null || $source === null || $source->variant === null || $delivery->status !== 'posted'
                 || $delivery->posted_at === null || $delivery->posted_by === null || $delivery->cancelled_at !== null
                 || $delivery->posting_payload_hash === null || $delivery->posting_evidence_hash === null
-                || ! hash_equals($delivery->posting_payload_hash, app(SalesDeliveryPostingService::class)->fingerprint($delivery))
+                || ! hash_equals($delivery->posting_payload_hash, $fingerprints[$delivery->id] ??= app(SalesDeliveryPostingService::class)->fingerprint($delivery))
                 || (int) $delivery->location_id !== (int) $order->location_id || (int) $deliveryItem->sales_order_id !== (int) $order->id) {
                 $this->invalid('Choose posted delivery lines belonging to the same order and branch.');
             }
             $quantity = $this->calculator->decimal($inputLine['quantity'], 'items.'.$index.'.quantity', 18, 4);
             if (! BigDecimal::of($quantity)->isPositive()
-                || BigDecimal::of($quantity)->plus($this->postedQuantity((int) $deliveryItem->id))
-                    ->plus(app(SalesReturnInvoiceReconciliation::class)->unbilled((int) $deliveryItem->id))->isGreaterThan($deliveryItem->quantity)) {
+                || BigDecimal::of($quantity)->plus(($postedQuantities[$deliveryItem->id] ?? '0.0000'))
+                    ->plus(($unbilledQuantities[$deliveryItem->id] ?? '0.0000'))->isGreaterThan($deliveryItem->quantity)) {
                 $this->invalid('Invoice quantity exceeds delivered but uninvoiced quantity.');
             }
-            $running[$source->id] ??= SalesInvoiceItem::where('sales_order_item_id', $source->id)
-                ->whereHas('salesInvoice', fn ($query) => $query->where('status', 'posted'))
-                ->with(['deliveryMatches.salesDeliveryItem', 'salesInvoice'])->get()
-                ->reduce(function (array $sum, $item) use ($order): array {
-                    $matched = BigDecimal::zero();
-                    foreach ($item->deliveryMatches as $match) {
-                        if ((int) $match->salesDeliveryItem->sales_order_item_id !== (int) $item->sales_order_item_id
-                            || (int) $match->salesDeliveryItem->sales_order_id !== (int) $order->id
-                            || (int) $item->salesInvoice->sales_order_id !== (int) $order->id
-                            || (int) $item->salesInvoice->location_id !== (int) $order->location_id) {
-                            $this->invalid('Invoice matching evidence is inconsistent.');
-                        }
-                        $matched = $matched->plus($match->matched_quantity);
-                    }
-                    if (! $matched->isEqualTo($item->quantity)) {
+            $running[$source->id] ??= $history->get($source->id, collect())->reduce(function (array $sum, $item) use ($order): array {
+                $matched = BigDecimal::zero();
+                foreach ($item->deliveryMatches as $match) {
+                    if ((int) $match->salesDeliveryItem->sales_order_item_id !== (int) $item->sales_order_item_id
+                        || (int) $match->salesDeliveryItem->sales_order_id !== (int) $order->id
+                        || (int) $item->salesInvoice->sales_order_id !== (int) $order->id
+                        || (int) $item->salesInvoice->location_id !== (int) $order->location_id) {
                         $this->invalid('Invoice matching evidence is inconsistent.');
                     }
-                    foreach (array_keys($sum) as $field) {
-                        $sum[$field] = (string) BigDecimal::of($sum[$field])->plus($field === 'quantity' ? $matched : $item->{$field});
-                    }
+                    $matched = $matched->plus($match->matched_quantity);
+                }
+                if (! $matched->isEqualTo($item->quantity)) {
+                    $this->invalid('Invoice matching evidence is inconsistent.');
+                }
+                foreach (array_keys($sum) as $field) {
+                    $sum[$field] = (string) BigDecimal::of($sum[$field])->plus($field === 'quantity' ? $matched : $item->{$field});
+                }
 
-                    return $sum;
-                }, ['quantity' => '0.0000', 'subtotal' => '0.0000', 'discount_amount' => '0.0000', 'tax_amount' => '0.0000']);
+                return $sum;
+            }, ['quantity' => '0.0000', 'subtotal' => '0.0000', 'discount_amount' => '0.0000', 'tax_amount' => '0.0000']);
             $previous = $running[$source->id];
             $newQuantity = BigDecimal::of($previous['quantity'])->plus($quantity);
             if ($newQuantity->isGreaterThan($source->quantity)) {
@@ -316,12 +327,21 @@ class SalesInvoiceService
         return $lines;
     }
 
-    private function postedQuantity(int $deliveryItemId): string
+    /** @param list<int> $deliveryItemIds
+     * @return array<int, string>
+     */
+    private function postedQuantities(array $deliveryItemIds): array
     {
-        return (string) BigDecimal::of(DB::table('sales_invoice_delivery_matches as matches')
+        if ($deliveryItemIds === []) {
+            return [];
+        }
+
+        return DB::table('sales_invoice_delivery_matches as matches')
             ->join('sales_invoice_items as items', 'items.id', '=', 'matches.sales_invoice_item_id')
             ->join('sales_invoices as invoices', 'invoices.id', '=', 'items.sales_invoice_id')
-            ->where('invoices.status', 'posted')->where('matches.sales_delivery_item_id', $deliveryItemId)->sum('matches.matched_quantity'))->toScale(4);
+            ->where('invoices.status', 'posted')->whereIn('matches.sales_delivery_item_id', $deliveryItemIds)
+            ->groupBy('matches.sales_delivery_item_id')->selectRaw('matches.sales_delivery_item_id, SUM(matches.matched_quantity) AS quantity')
+            ->pluck('quantity', 'sales_delivery_item_id')->all();
     }
 
     private function saveLines(SalesInvoice $invoice, array $lines): void
@@ -391,6 +411,7 @@ class SalesInvoiceService
 
     private function audit(User $actor, SalesInvoice $invoice, string $event): void
     {
+        app(ReadModelCache::class)->invalidateAfterCommit('sales', $invoice->getConnection());
         app(AuditLogger::class)->record($event, actor: $actor, metadata: [
             'sales_invoice_uuid' => $invoice->uuid, 'sales_order_id' => $invoice->sales_order_id,
             'location_id' => $invoice->location_id, 'status' => $invoice->status, 'total_amount' => $invoice->total_amount,

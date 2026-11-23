@@ -2,11 +2,11 @@
 
 namespace App\Modules\Products\Services;
 
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Products\Models\Category;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class ProductReferenceChecker
 {
@@ -14,11 +14,11 @@ class ProductReferenceChecker
 
     public function variantIsReferenced(ProductVariant $variant): bool
     {
-        if (Schema::hasTable('inventory_size_allocations') && DB::table('inventory_size_allocations')->where('source_variant_id', $variant->id)->exists()) {
+        if (RequestAuthorizationFacts::tableExists('inventory_size_allocations') && DB::table('inventory_size_allocations')->where('source_variant_id', $variant->id)->exists()) {
             return true;
         }
         foreach (self::VARIANT_TABLES as $table) {
-            if (Schema::hasTable($table) && DB::table($table)->where('variant_id', $variant->id)->exists()) {
+            if (RequestAuthorizationFacts::tableExists($table) && DB::table($table)->where('variant_id', $variant->id)->exists()) {
                 return true;
             }
         }
@@ -43,7 +43,7 @@ class ProductReferenceChecker
         $variantIds = ProductVariant::query()->select('product_variants.id')->whereIn('product_id', $productIds);
 
         foreach (self::VARIANT_TABLES as $table) {
-            if (Schema::hasTable($table) && DB::table($table)->whereIn('variant_id', clone $variantIds)->exists()) {
+            if (RequestAuthorizationFacts::tableExists($table) && DB::table($table)->whereIn('variant_id', clone $variantIds)->exists()) {
                 return true;
             }
         }

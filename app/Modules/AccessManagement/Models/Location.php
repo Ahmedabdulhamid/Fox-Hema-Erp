@@ -114,6 +114,9 @@ class Location extends Model
         }
 
         foreach ($tables as $table) {
+            if (! Schema::hasTable($table)) {
+                continue;
+            }
             $query = $this->getConnection()->table($table)->where('location_id', $this->getKey());
             if ($lockForUpdate) {
                 $query->lockForUpdate();
@@ -123,6 +126,9 @@ class Location extends Model
             }
         }
 
+        if (! Schema::hasTable('stock_transfers')) {
+            return false;
+        }
         $query = $this->getConnection()->table('stock_transfers')
             ->where('from_location_id', $this->getKey())->orWhere('to_location_id', $this->getKey());
         if ($lockForUpdate) {

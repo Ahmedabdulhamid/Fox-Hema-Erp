@@ -18,6 +18,7 @@ use App\Modules\Sales\Models\SalesInvoice;
 use App\Modules\Sales\Models\SalesOrder;
 use App\Modules\Sales\Models\SalesReturn;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 
 class DocumentPresentation
@@ -84,21 +85,29 @@ class DocumentPresentation
         } elseif ($record instanceof SalesDelivery || $record instanceof SalesInvoice || $record instanceof SalesReturn) {
             $this->addLink($links, $record->salesOrder, $actor);
         } elseif ($record instanceof PurchaseOrder) {
-            $this->collectLinks($links, $record->receipts()->getQuery(), $actor);
-            $this->collectLinks($links, $record->vendorBills()->getQuery(), $actor);
+            $this->collectLinks($links, $record->receipts()->getQuery(), $actor, $record,
+                $record->relationLoaded('receipts') ? $record->receipts : null);
+            $this->collectLinks($links, $record->vendorBills()->getQuery(), $actor, $record,
+                $record->relationLoaded('vendorBills') ? $record->vendorBills : null);
         } elseif ($record instanceof PurchaseReceipt || $record instanceof VendorBill) {
             $this->addLink($links, $record->purchaseOrder, $actor);
             if ($record instanceof PurchaseReceipt) {
-                $this->collectLinks($links, VendorBill::whereHas('items.receiptMatches.purchaseReceiptItem', fn ($q) => $q->where('purchase_receipt_id', $record->id)), $actor);
+                $this->collectLinks($links, VendorBill::whereHas('items.receiptMatches.purchaseReceiptItem', fn ($q) => $q->where('purchase_receipt_id', $record->id)), $actor, $record->purchaseOrder);
             }
         }
 
         return $links;
     }
 
-    private function collectLinks(array &$links, Builder $query, User $actor): void
+    private function collectLinks(array &$links, Builder $query, User $actor, ?PurchaseOrder $order = null, ?Collection $records = null): void
     {
-        foreach ($query->orderByDesc('id')->limit(12)->get() as $target) {
+        if ($order === null && ($query->getModel() instanceof PurchaseReceipt || $query->getModel() instanceof VendorBill)) {
+            $query->with('purchaseOrder');
+        }
+        foreach ($records?->sortByDesc('id')->take(12) ?? $query->orderByDesc('id')->limit(12)->get() as $target) {
+            if ($order !== null && (int) $target->purchase_order_id === (int) $order->getKey()) {
+                $target->setRelation('purchaseOrder', $order);
+            }
             $this->addLink($links, $target, $actor);
         }
     }

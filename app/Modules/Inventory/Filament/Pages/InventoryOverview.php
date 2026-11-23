@@ -2,6 +2,7 @@
 
 namespace App\Modules\Inventory\Filament\Pages;
 
+use App\Filament\ReadModelCache;
 use App\Modules\Inventory\Filament\InteractsWithInventoryProducts;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryInsights;
@@ -12,6 +13,7 @@ use App\Modules\Products\Models\Category;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use Filament\Pages\Page;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
@@ -350,16 +352,20 @@ class InventoryOverview extends Page
         $categoryProductIds = (clone $insights->query(auth()->user(), $locationFilters + ['brand' => $this->draftBrand]))->select('product_id');
         $filteredProductIds = (clone $insights->query(auth()->user(), $locationFilters + ['brand' => $this->draftBrand, 'category' => $this->draftCategory]))->select('product_id');
 
-        return [
-            'location' => app(InventoryAccess::class)->locations(auth()->user(), InventoryPermissions::BALANCES)->orderBy('name')->pluck('name', 'id')->all(),
-            'brand' => Brand::whereIn('id', Product::whereIn('id', $brandProductIds)->select('brand_id'))->orderBy('name')->pluck('name', 'id')->all(),
-            'category' => Category::whereIn('id', Product::whereIn('id', $categoryProductIds)->select('category_id'))->orderBy('name')->pluck('name', 'id')->all(),
+        $queries = [
+            'location' => app(InventoryAccess::class)->locations(auth()->user(), InventoryPermissions::BALANCES)->orderBy('name'),
+            'brand' => Brand::whereIn('id', Product::whereIn('id', $brandProductIds)->select('brand_id'))->orderBy('name'),
+            'category' => Category::whereIn('id', Product::whereIn('id', $categoryProductIds)->select('category_id'))->orderBy('name'),
             'product' => Product::whereIn('id', $filteredProductIds)->where(function ($query): void {
                 $query->where('name', 'like', '%'.$this->search.'%');
                 if (filled($this->draftProduct)) {
                     $query->orWhereKey($this->draftProduct);
                 }
-            })->orderBy('name')->limit(50)->pluck('name', 'id')->all(),
+            })->orderBy('name')->limit(50),
         ];
+
+        return app(ReadModelCache::class)->remember('inventory', [
+            'overview-options', array_map(fn (Builder $query): array => [$query->toSql(), $query->getBindings()], $queries),
+        ], fn (): array => array_map(fn (Builder $query): array => (clone $query)->pluck('name', 'id')->all(), $queries));
     }
 }

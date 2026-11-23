@@ -25,6 +25,7 @@ use App\Modules\Sales\Filament\Resources\SalesCreditNotes\Pages\ViewSalesCreditN
 use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesInvoice;
 use App\Modules\Sales\Models\SalesOrder;
+use App\Modules\Sales\Services\SalesCreditCalculator;
 use App\Modules\Sales\Services\SalesCreditNotePdfService;
 use App\Modules\Sales\Services\SalesCreditNoteService;
 use App\Modules\Sales\Services\SalesDeliveryPostingService;
@@ -233,6 +234,57 @@ class SalesCreditNoteTest extends TestCase
             ->mapWithKeys(fn ($table) => [$table => DB::table($table)->orderBy('id')->get()->toJson()])->all();
     }
 
+    public static function queryDocumentSizes(): array
+    {
+        return ['small' => [1], 'large' => [20]];
+    }
+
+    #[DataProvider('queryDocumentSizes')]
+    public function test_credit_details_query_growth_preserves_partial_allocation_amounts(int $lineCount): void
+    {
+        $delivery = $this->deliver($this->order($lineCount));
+        $invoice = $this->postInvoice($this->invoice($delivery, '3'));
+        $return = $this->returned($delivery);
+        $this->postCredit($this->draftCredit($return, $invoice, '1'));
+        $this->draftCredit($return, $invoice, '1');
+        $service = app(SalesCreditNoteService::class);
+        $before = $this->financialSnapshot();
+        $service->details($this->actor, $return->id, $invoice->id);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $details = $service->details($this->actor, $return->id, $invoice->id);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $aggregateQueries = collect($queries)->filter(fn (array $query): bool => str_contains($query['query'], 'sales_credit_note_items'))->count();
+        fwrite(STDOUT, "\nPHASE2A ".json_encode(['operation' => 'credit_details', 'lines' => $lineCount, 'queries' => count($queries), 'usage_queries' => $aggregateQueries], JSON_THROW_ON_ERROR)."\n");
+        $this->assertCount($lineCount, $details);
+        $this->assertSame(2, $aggregateQueries);
+        $this->assertLessThanOrEqual(14, count($queries));
+        foreach ($queries as $query) {
+            $this->assertMatchesRegularExpression('/^select /i', $query['query']);
+            $this->assertStringNotContainsString('for update', $query['query']);
+        }
+        foreach ($details as $row) {
+            $this->assertSame('2.0000', $row['remaining']);
+            $expected = app(SalesCreditCalculator::class)->allocate(
+                array_replace($row, ['quantity' => $row['invoice_quantity']]), '1.0000', '2.0000');
+            $this->assertSame($expected['line_total'], $row['remaining_amount']);
+        }
+        $this->assertSame([], $service->details($this->actor, $return->id, $invoice->id + 100000));
+        $this->assertSame([], $service->details(null, $return->id));
+        $this->assertSame($before, $this->financialSnapshot());
+        $final = $this->postCredit($this->draftCredit($return, $invoice, '2'));
+        $this->assertSame('posted', $final->status);
+        foreach ($service->details($this->actor, $return->id, $invoice->id) as $row) {
+            $this->assertSame('0.0000', $row['remaining']);
+            $this->assertSame('0.0000', $row['remaining_amount']);
+        }
+    }
+
     public function test_mysql_credit_snapshot_key_order_preserves_posting_and_replay(): void
     {
         [$return, $invoice] = $this->fixture();
@@ -358,10 +410,34 @@ class SalesCreditNoteTest extends TestCase
     {
         $delivery = $this->deliver($this->order());
         $invoice = $this->postInvoice($this->invoice($delivery, '3'));
+        $previous = '0.0000';
         foreach (['0.3333', '2.6667'] as $quantity) {
-            $this->postCredit($this->draftCredit($this->returned($delivery, $quantity), $invoice));
+            $return = $this->returned($delivery, $quantity);
+            $details = app(SalesCreditNoteService::class)->details($this->actor, $return->id, $invoice->id);
+            $row = reset($details);
+            $expected = app(SalesCreditCalculator::class)->allocate(
+                $invoice->items()->sole()->getAttributes(), $previous, $quantity);
+            $this->assertSame($quantity, $row['remaining']);
+            $this->assertSame($expected['line_total'], $row['remaining_amount']);
+            $this->postCredit($this->draftCredit($return, $invoice));
+            $previous = (string) BigDecimal::of($previous)->plus($quantity)->toScale(4);
         }
         $this->assertTrue(BigDecimal::of(SalesCreditNote::sum('total_amount'))->isEqualTo($invoice->total_amount));
+    }
+
+    public function test_credit_details_reject_overallocated_history_without_writing(): void
+    {
+        [$return, $invoice] = $this->fixture();
+        $note = $this->postCredit($this->draftCredit($return, $invoice, '1'));
+        DB::table('sales_credit_note_items')->where('sales_credit_note_id', $note->id)->update(['quantity' => '4.0000']);
+        $before = $this->financialSnapshot();
+        try {
+            app(SalesCreditNoteService::class)->details($this->actor, $return->id, $invoice->id);
+            $this->fail('Overallocated history must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame(['record' => [__('credits.inconsistent')]], $exception->errors());
+        }
+        $this->assertSame($before, $this->financialSnapshot());
     }
 
     public function test_multiple_invoice_lines_preserve_distinct_evidence(): void

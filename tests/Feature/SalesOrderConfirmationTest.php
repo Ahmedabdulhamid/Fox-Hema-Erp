@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\NumericFormatter;
 use App\Modules\AccessManagement\Database\Seeders\AccessManagementSeeder;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Module;
@@ -357,14 +358,13 @@ class SalesOrderConfirmationTest extends TestCase
         $this->assertSame(0, SalesStockReservation::count());
     }
 
-    public function test_inconsistent_balance_and_owner_counters_fail_without_adjusting_stock(): void
+    public function test_database_rejects_inconsistent_balances_and_services_reject_owner_counter_drift(): void
     {
         $order = $this->draft();
         foreach ([['quantity_available' => '9'], ['quantity_reserved' => '11'], ['quantity_on_hand' => '-1']] as $bad) {
             $this->balance($this->variant, '10');
-            DB::table('stock_balances')->where('variant_id', $this->variant->id)->update($bad);
             $before = StockBalance::first()->getAttributes();
-            $this->reject(fn () => $this->workflow->confirm($this->actor, $order));
+            $this->reject(fn () => DB::table('stock_balances')->where('variant_id', $this->variant->id)->update($bad), QueryException::class);
             $this->assertSame($before, StockBalance::first()->getAttributes());
             $this->assertSame(0, SalesStockReservation::count());
         }
@@ -397,9 +397,15 @@ class SalesOrderConfirmationTest extends TestCase
         Livewire::test(ViewSalesOrder::class, ['record' => $order->uuid])->assertActionVisible('confirm')
             ->callAction('confirm')->assertHasNoActionErrors()->assertNotified(__('Sales order confirmed and stock reserved.'));
         $this->assertSame('confirmed', $order->fresh()->status);
+        $reservation = $order->reservations()->sole();
+        $this->assertSame('5.0000', $reservation->quantity_reserved);
+        $this->assertSame('5.0000', StockBalance::first()->quantity_reserved);
         Livewire::test(ViewSalesOrder::class, ['record' => $order->uuid])->assertActionHidden('confirm')->assertActionVisible('cancel')
-            ->assertSee('5.0000')->callAction('cancel')->assertHasNoActionErrors()->assertNotified(__('Sales order cancelled and reservations released.'));
+            ->assertSee(NumericFormatter::format($reservation->quantity_reserved, 'quantity'))
+            ->callAction('cancel')->assertHasNoActionErrors()->assertNotified(__('Sales order cancelled and reservations released.'));
         $this->assertSame('cancelled', $order->fresh()->status);
+        $this->assertSame('5.0000', $reservation->fresh()->quantity_released);
+        $this->assertSame('0.0000', StockBalance::first()->quantity_reserved);
     }
 
     public function test_permission_registration_preserves_existing_grants(): void
@@ -478,7 +484,7 @@ class SalesOrderConfirmationTest extends TestCase
         $configuration = config('database.connections.mysql');
         $database = DB::connection()->getDatabaseName();
         $this->assertSame('mysql', DB::getDriverName());
-        $this->assertStringStartsWith('codex_public_ids_test_purchasing_', $database);
+        $this->assertMatchesRegularExpression('/^codex_public_ids_test_(?:purchasing|treasury)_[a-zA-Z0-9_]+$/D', $database);
         $processes = [];
         $start = microtime(true) + 2;
         try {
@@ -536,6 +542,7 @@ class SalesOrderConfirmationTest extends TestCase
         $line = Arr::except($this->line($this->variant, '2'), ['discount_amount', 'tax_amount']);
         foreach ([false, true] as $table) {
             $order = $this->draft('2', [$line]);
+            $this->assertSame($this->drafts->revision($order), $this->drafts->revision(SalesOrder::withRowActionFacts()->findOrFail($order->id)));
             $saved = $order->items()->sole()->commercial_snapshot;
             $calculated = app(SalesLinePricing::class)->line($this->variant, $line)['commercial_snapshot'];
             if (DB::getDriverName() === 'mysql' && ! str_contains(DB::selectOne('SELECT VERSION() AS version')->version, 'MariaDB')) {
@@ -546,7 +553,7 @@ class SalesOrderConfirmationTest extends TestCase
             session(['locale' => 'ar']);
             Livewire::test($table ? ListSalesOrders::class : ViewSalesOrder::class, $table ? [] : ['record' => $order->uuid])
                 ->callAction($table ? TestAction::make('confirm')->table($order) : 'confirm')
-                ->assertNotified(__('Sales order confirmed and stock reserved.'))->assertRedirect();
+                ->assertHasNoActionErrors()->assertNotified(__('Sales order confirmed and stock reserved.'))->assertRedirect();
             $this->assertSame('confirmed', $order->refresh()->status);
             $this->assertSame('2.0000', $order->reservations()->sole()->quantity_reserved);
             $this->assertSame('10.0000', StockBalance::first()->quantity_on_hand);

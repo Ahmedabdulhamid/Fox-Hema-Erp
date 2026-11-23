@@ -16,6 +16,7 @@ use App\Modules\Purchasing\Models\PurchaseReceipt;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Database\DatabaseTransactionRecord;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +26,17 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseReceiptService
 {
+    /** @var array<int, array{command: StockPostingCommand, variant_id: int, location_id: int, reference: array<string, mixed>}> */
+    private array $authorizedCommands = [];
+
+    private ?\PDO $postingConnection = null;
+
+    private ?int $postingActorId = null;
+
+    private int $postingTransactionLevel = 0;
+
+    private ?DatabaseTransactionRecord $postingTransaction = null;
+
     public function __construct(
         private readonly PurchasingAccess $access,
         private readonly PurchaseOrderCalculator $calculator,
@@ -148,13 +160,33 @@ class PurchaseReceiptService
             }
             usort($positive, fn (PurchaseReceiptItem $a, PurchaseReceiptItem $b): int => [$a->purchaseOrderItem->variant_id, $a->id] <=> [$b->purchaseOrderItem->variant_id, $b->id]);
             $postedAt = now();
-            $plans = $this->valuation->prepare($positive, $postedAt);
+            $plans = $this->valuation->prepare($positive, $postedAt, $received);
             $commands = array_map(fn (PurchaseReceiptItem $item): StockPostingCommand => new StockPostingCommand(
                 $item->purchaseOrderItem->variant, $order->location, StockMovementType::Purchase, $item->quantity,
                 'purchase-receipt-item:'.$item->uuid.':validate', reference: $item,
                 valuationUnitCost: $plans[$item->id]['unit_cost'],
             ), $positive);
-            $movements = $this->inventory->postMany($commands, $actor);
+            if ($this->authorizedCommands !== []) {
+                $this->invalid('receipt', 'Receipt posting cannot be nested inside an active stock handoff.');
+            }
+            $this->postingConnection = DB::connection()->getPdo();
+            $this->postingTransactionLevel = DB::connection()->transactionLevel();
+            $this->postingTransaction = $this->currentPostingTransaction();
+            $this->postingActorId = (int) $actor->id;
+            foreach ($commands as $command) {
+                $this->authorizedCommands[spl_object_id($command)] = ['command' => $command,
+                    'variant_id' => (int) $command->variant->id, 'location_id' => (int) $command->location->id,
+                    'reference' => $command->reference->getAttributes()];
+            }
+            try {
+                $movements = $this->inventory->postMany($commands, $actor);
+            } finally {
+                $this->authorizedCommands = [];
+                $this->postingConnection = null;
+                $this->postingActorId = null;
+                $this->postingTransactionLevel = 0;
+                $this->postingTransaction = null;
+            }
             $this->valuation->post($positive, $movements, $plans, (int) $order->location_id, $postedAt);
             foreach ($positive as $index => $item) {
                 $item->stock_movement_id = $movements[$index]->id;
@@ -194,6 +226,29 @@ class PurchaseReceiptService
         }, 3);
     }
 
+    /** Only commands constructed from locked receipt lines and prepared valuation plans may cross the stock boundary. */
+    public function authorizesCommand(StockPostingCommand $command, User $actor): bool
+    {
+        $evidence = $this->authorizedCommands[spl_object_id($command)] ?? null;
+
+        return $evidence !== null && $evidence['command'] === $command
+            && $this->postingActorId === (int) $actor->id
+            && $this->postingTransactionLevel > 0
+            && DB::connection()->transactionLevel() === $this->postingTransactionLevel
+            && DB::connection()->getPdo() === $this->postingConnection
+            && $this->postingTransaction !== null
+            && $this->currentPostingTransaction() === $this->postingTransaction
+            && $evidence['variant_id'] === (int) $command->variant->id
+            && $evidence['location_id'] === (int) $command->location->id
+            && $evidence['reference'] === $command->reference?->getAttributes();
+    }
+
+    private function currentPostingTransaction(): ?DatabaseTransactionRecord
+    {
+        return app('db.transactions')->getPendingTransactions()->last(fn (DatabaseTransactionRecord $transaction): bool => $transaction->connection === DB::connection()->getName()
+            && $transaction->level === DB::connection()->transactionLevel());
+    }
+
     public function revision(PurchaseReceipt $receipt): string
     {
         return hash('sha256', json_encode([$receipt->getAttributes(), $receipt->items()->orderBy('id')->get()->map->getAttributes()->all()], JSON_THROW_ON_ERROR));
@@ -228,7 +283,8 @@ class PurchaseReceiptService
         }
 
         return ['ordered' => (string) $ordered->toScale(4), 'received' => (string) $received->toScale(4),
-            'remaining' => (string) $ordered->minus($received)->toScale(4), 'receipt_count' => $order->receipts()->count()];
+            'remaining' => (string) $ordered->minus($received)->toScale(4),
+            'receipt_count' => $order->relationLoaded('receipts') ? $order->receipts->count() : $order->receipts()->count()];
     }
 
     /** @return array{PurchaseOrder, PurchaseReceipt} */

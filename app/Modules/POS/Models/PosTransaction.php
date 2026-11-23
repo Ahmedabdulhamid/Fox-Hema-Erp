@@ -22,6 +22,8 @@ class PosTransaction extends Model
     use HasPublicUuid;
 
     protected $fillable = [
+        'schema_version',
+        'source_pos_transaction_id',
         'client_transaction_id',
         'pos_device_id',
         'pos_session_id',
@@ -58,9 +60,15 @@ class PosTransaction extends Model
             'processed_at' => 'datetime',
             'request_payload' => 'array',
             'result_payload' => 'array',
+            'schema_version' => 'integer',
             'attempts' => 'integer',
             'last_attempt_at' => 'datetime',
         ];
+    }
+
+    public function sourceTransaction(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'source_pos_transaction_id');
     }
 
     public function posDevice(): BelongsTo

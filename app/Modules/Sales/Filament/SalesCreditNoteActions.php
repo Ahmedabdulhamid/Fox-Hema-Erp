@@ -21,7 +21,6 @@ class SalesCreditNoteActions
     public static function download(string $locale): Action
     {
         return Action::make('download_'.$locale)->label(__('credits.download_'.$locale))->authorize('download')
-            ->visible(fn (SalesCreditNote $record): bool => auth()->user()?->can('download', $record) ?? false)
             ->url(fn (SalesCreditNote $record): string => route('sales.credit-notes.pdf', ['note' => $record->uuid, 'locale' => $locale]));
     }
 
@@ -29,7 +28,6 @@ class SalesCreditNoteActions
     {
         return Action::make($operation)->label(__('credits.'.$operation))->authorize($operation)
             ->color($operation === 'post' ? 'success' : 'danger')->requiresConfirmation()
-            ->visible(fn (SalesCreditNote $record): bool => auth()->user()?->can($operation, $record) ?? false)
             ->modalDescription(__('credits.'.$operation.'_confirm'))
             ->schema([Hidden::make('revision')->default(fn (SalesCreditNote $record): string => app(SalesCreditNoteService::class)->revision($record))])
             ->action(function (SalesCreditNote $record, array $data, Component $livewire, Action $action) use ($operation): void {

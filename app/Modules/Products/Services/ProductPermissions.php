@@ -18,6 +18,6 @@ class ProductPermissions
             }
         }
 
-        return [...$permissions, 'products.update_prices', 'products.view_reference_cost', 'products.update_reference_cost', 'products.assign_taxes', 'products.assign_discounts', 'products.categories.view_costing', 'products.categories.update_costing'];
+        return [...$permissions, 'products.import', 'products.update_prices', 'products.view_reference_cost', 'products.update_reference_cost', 'products.assign_taxes', 'products.assign_discounts', 'products.categories.view_costing', 'products.categories.update_costing'];
     }
 }

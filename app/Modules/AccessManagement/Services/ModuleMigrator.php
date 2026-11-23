@@ -52,6 +52,10 @@ class ModuleMigrator extends Migrator
         $path = str_replace('\\', '/', realpath($file) ?: $file);
         $name = $this->getMigrationName($file);
         $phase = str_contains($name, '_add_public_identifiers_') ? 1 : 0;
+        if (str_ends_with($name, '_create_pos_device_payment_methods_table')
+            || str_ends_with($name, '_extend_pos_foundation_context')) {
+            $phase = 2;
+        }
         foreach (self::ORDER as $priority => $module) {
             if (str_contains($path, "/Modules/{$module}/Database/Migrations/")) {
                 return [$phase, $priority, $name];

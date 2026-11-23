@@ -29,7 +29,7 @@ class SuppliersTable
                 ->color(fn (bool $state): string => $state ? 'success' : 'gray'),
         ])->filters([TernaryFilter::make('is_active')->label(__('Active'))])
             ->defaultSort('name')->paginationPageOptions([25, 50, 100])
-            ->recordActions([ViewAction::make(), EditAction::make(), ...self::statusActions()])
+            ->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), ...self::statusActions()])
             ->toolbarActions([]);
     }
 
@@ -41,8 +41,8 @@ class SuppliersTable
                 ->authorize('activate')->visible(fn (Supplier $record): bool => ! $record->is_active)
                 ->requiresConfirmation()->successNotificationTitle(__('Supplier activated.'))
                 ->action(function (Supplier $record, Action $action, Component $livewire): void {
-                    app(SupplierService::class)->activate(auth()->user(), $record);
-                    $record->refresh();
+                    $updatedSupplier = app(SupplierService::class)->activate(auth()->user(), $record);
+                    $record->is_active = $updatedSupplier->is_active;
                     if ($livewire instanceof EditRecord) {
                         $livewire->refreshFormData(['is_active']);
                     }
@@ -52,8 +52,8 @@ class SuppliersTable
                 ->authorize('deactivate')->visible(fn (Supplier $record): bool => $record->is_active)
                 ->requiresConfirmation()->successNotificationTitle(__('Supplier deactivated.'))
                 ->action(function (Supplier $record, Action $action, Component $livewire): void {
-                    app(SupplierService::class)->deactivate(auth()->user(), $record);
-                    $record->refresh();
+                    $updatedSupplier = app(SupplierService::class)->deactivate(auth()->user(), $record);
+                    $record->is_active = $updatedSupplier->is_active;
                     if ($livewire instanceof EditRecord) {
                         $livewire->refreshFormData(['is_active']);
                     }

@@ -13,6 +13,7 @@ use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Models\StockMovement;
 use App\Modules\Inventory\Services\InventoryPostingService;
 use App\Modules\Products\Models\ProductVariant;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -129,8 +130,8 @@ class InventoryPostingTest extends TestCase
         $this->postStock('-3', 'available-only', StockMovementType::Sale);
         $this->assertSame('2.0000', $this->balance()->quantity_reserved);
         $this->rejectInventory(fn () => $this->postStock('-0.0001', 'reserved-sale', StockMovementType::Sale));
-        $this->balance()->update(['quantity_available' => '9']);
-        $this->rejectInventory(fn () => $this->postStock('1', 'drift'));
+        $this->rejectInventory(fn () => $this->balance()->update(['quantity_available' => '9']), QueryException::class);
+        $this->assertSame('0.0000', $this->balance()->quantity_available);
         $this->assertSame(1, StockMovement::count());
     }
 
@@ -145,14 +146,12 @@ class InventoryPostingTest extends TestCase
     }
 
     #[DataProvider('invalidBalances')]
-    public function test_existing_invalid_balances_are_not_silently_repaired(string $onHand, string $reserved, string $available): void
+    public function test_database_rejects_invalid_balances(string $onHand, string $reserved, string $available): void
     {
-        StockBalance::create(['variant_id' => $this->variant->id, 'location_id' => $this->location->id,
-            'quantity_on_hand' => $onHand, 'quantity_reserved' => $reserved, 'quantity_available' => $available]);
-        $this->rejectInventory(fn () => $this->postStock('1', 'invalid-balance'));
+        $this->rejectInventory(fn () => StockBalance::create(['variant_id' => $this->variant->id, 'location_id' => $this->location->id,
+            'quantity_on_hand' => $onHand, 'quantity_reserved' => $reserved, 'quantity_available' => $available]), QueryException::class);
         $this->assertSame(0, StockMovement::count());
-        $this->assertSame($onHand.'.0000', $this->balance()->quantity_on_hand);
-        $this->assertSame($reserved.'.0000', $this->balance()->quantity_reserved);
+        $this->assertSame(0, StockBalance::count());
     }
 
     public function test_replay_after_commit_is_decimal_normalized_and_conflicting_fields_fail(): void

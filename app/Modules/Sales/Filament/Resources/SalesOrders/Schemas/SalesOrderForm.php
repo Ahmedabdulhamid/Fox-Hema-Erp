@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesOrders\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Models\NumericFormatter;
 use App\Models\QuantityFormatter;
 use App\Modules\Products\Filament\CommercialSelectors;
@@ -13,6 +14,7 @@ use App\Modules\Sales\Services\SalesAccess;
 use App\Modules\Sales\Services\SalesLinePricing;
 use App\Modules\Sales\Services\SalesProductSelection;
 use App\Modules\Sales\Services\SalesProfitability;
+use App\Modules\Taxes\Services\CommercialDefinitions;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Hidden;
@@ -65,15 +67,22 @@ class SalesOrderForm
                                     Hidden::make('id'),
                                     Hidden::make('description'),
                                     Hidden::make('available_quantity')->dehydrated(false),
-                                    ProductLinePreview::make(self::class, 'variant_id', fn (Get $get, array $ids): Collection => ProductLinePreview::byKeys(app(SalesProductSelection::class)->variants(auth()->user(), $get('../../location_id'), false), $ids)->with(['images', 'product.images', 'product.brand', 'color', 'size'])->get()->keyBy('id'), null, 'components.commercial-product-cell'),
+                                    ProductLinePreview::make(self::class, 'variant_id', fn (Get $get, array $ids): Collection => self::displayVariants($get('../../items') ?? [], $get('../../location_id'))->only($ids)->loadMissing(['images', 'product.images', 'product.brand']), null, 'components.commercial-product-cell'),
                                     Section::make(__('Select product'))->compact()->collapsible()->collapsed(fn (Get $get): bool => filled($get('product_id')))
                                         ->extraAttributes(['class' => 'fox-line-catalog-picker'])->schema([
                                             CommercialSelectors::brand(fn (Get $get) => app(SalesProductSelection::class)->products(auth()->user(), $get('../../location_id'))),
                                             CommercialSelectors::brandPreview(),
                                             Select::make('product_id')->label(__('Product'))->required()->searchable()->preload()->live()->columnSpanFull()
-                                                ->options(fn (Get $get): array => app(SalesProductSelection::class)->productOptions(auth()->user(), $get('../../location_id'), '', $get('brand_id')))
+                                                ->options(fn (Get $get): array => self::productOptions($get))
                                                 ->getSearchResultsUsing(fn (Get $get, string $search): array => app(SalesProductSelection::class)->productOptions(auth()->user(), $get('../../location_id'), $search, $get('brand_id')))
-                                                ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(SalesProductSelection::class)->products(auth()->user(), $get('../../location_id'), false)->whereKey($value)->value('name'))
+                                                ->getOptionLabelUsing(function (Get $get, $value): ?string {
+                                                    $query = app(SalesProductSelection::class)->products(auth()->user(), $get('../../location_id'), false);
+                                                    $ids = array_values(array_unique(array_column($get('../../items') ?? [], 'product_id')));
+                                                    $products = RequestDisplayData::remember('sales-form-product-labels:'.json_encode([$get('../../location_id'), $ids], JSON_THROW_ON_ERROR),
+                                                        fn (): Collection => $query->whereKey($ids)->get()->keyBy('id'));
+
+                                                    return $products->get($value)?->name;
+                                                })
                                                 ->afterStateUpdated(function (Set $set): void {
                                                     $set('variant_id', null);
                                                     $set('description', null);
@@ -86,11 +95,11 @@ class SalesOrderForm
                                 ]),
                                 Group::make()->columnSpanFull()->columns(['default' => 1, 'md' => 2])->extraAttributes(['class' => 'fox-order-variant'])->schema([
                                     Select::make('variant_id')->wrapOptionLabels()->label(__('Variant'))->required()->searchable()->preload()->live()->columnSpanFull()
-                                        ->options(fn (Get $get): array => app(SalesProductSelection::class)->variantOptions(auth()->user(), $get('../../location_id'), $get('product_id')))
+                                        ->options(fn (Get $get): array => self::variantOptions($get))
                                         ->getSearchResultsUsing(fn (Get $get, string $search): array => app(SalesProductSelection::class)->variantOptions(auth()->user(), $get('../../location_id'), $get('product_id'), $search))
                                         ->getOptionLabelUsing(function (Get $get, $value): ?string {
                                             $selection = app(SalesProductSelection::class);
-                                            $variant = $selection->variants(auth()->user(), $get('../../location_id'), false)->where('product_id', $get('product_id'))->with(['product', 'size', 'color'])->find($value);
+                                            $variant = self::variant($get);
 
                                             return $variant === null ? null : $selection->label($variant);
                                         })
@@ -99,15 +108,17 @@ class SalesOrderForm
                                             $set('unit_price', $variant === null ? '0' : app(SellingPriceResolver::class)->resolve($variant));
                                             $set('description', $variant === null ? null : Str::limit($variant->displayName(), 255, ''));
                                             $set('available_quantity', $variant?->sales_available_quantity ?? '0.0000');
-                                            $discounts = $variant === null ? collect() : app(SalesLinePricing::class)->discounts($variant->product);
+                                            $discounts = $variant === null ? collect() : $variant->product->discounts;
                                             $set('discount_id', null);
                                             $set('tax_ids', array_keys(self::taxOptions($get)));
                                         }),
                                 ]),
                                 TextInput::make('quantity')->prefixIcon('heroicon-o-cube')->label(__('Quantity'))->required()->default('1')->type('number')->step('0.0001')->inputMode('decimal')->live(onBlur: true)
+                                    ->partiallyRenderComponentsAfterStateUpdated(['discount_amount', 'tax_amount', 'subtotal', 'line_total', 'line-profitability', '../../order-summary'])
                                     ->extraInputAttributes(fn (Get $get): array => ['min' => '0.0001', 'max' => $get('available_quantity') ?? '0.0000'])
                                     ->hint(fn (Get $get): string => __('Available').': '.QuantityFormatter::format($get('available_quantity') ?? '0.0000')),
-                                TextInput::make('unit_price')->suffix('EGP')->label(__('Unit price'))->required()->default('0')->inputMode('decimal')->live(onBlur: true),
+                                TextInput::make('unit_price')->suffix('EGP')->label(__('Unit price'))->required()->default('0')->inputMode('decimal')->live(onBlur: true)
+                                    ->partiallyRenderComponentsAfterStateUpdated(['discount_amount', 'tax_amount', 'subtotal', 'line_total', 'line-profitability', '../../order-summary']),
                                 Group::make()->schema([
                                     CommercialSelectors::definition('discounts', 'sales', cacheOptions: true)->wrapOptionLabels(),
                                     self::amountCell('discount_amount', 'Applied discount amount'),
@@ -117,7 +128,7 @@ class SalesOrderForm
                                     self::amountCell('tax_amount', 'Applied tax amount'),
                                 ]),
                                 Group::make()->columnSpanFull()->columns(['default' => 1, 'md' => 2])->extraAttributes(['class' => 'fox-order-line-total'])->schema([self::amountCell('subtotal', 'Subtotal'), self::amountCell('line_total', 'Line total', true),
-                                    View::make('components.profitability-line')->visible(fn (Get $get): bool => app(SalesProfitability::class)->canView(auth()->user(), $get('../../location_id')))
+                                    View::make('components.profitability-line')->key('line-profitability')->visible(fn (Get $get): bool => app(SalesProfitability::class)->canView(auth()->user(), $get('../../location_id')))
                                         ->viewData(function (Get $get, View $component): array {
                                             $key = last(explode('.', $component->getContainer()->getStatePath()));
 
@@ -132,7 +143,7 @@ class SalesOrderForm
                     ]),
                 ]),
                 Group::make()->columnSpan(['default' => 1, 'xl' => 3])->extraAttributes(['class' => 'fox-order-aside'])->schema([
-                    Section::make(__('Order summary'))->icon('heroicon-o-calculator')->schema([
+                    Section::make(__('Order summary'))->key('order-summary')->icon('heroicon-o-calculator')->schema([
                         View::make('components.financial-summary')->viewData(fn (Get $get): array => self::totalsPreview($get) + ['commercial' => true]),
                         View::make('components.profitability-summary')->visible(fn (Get $get): bool => app(SalesProfitability::class)->canView(auth()->user(), $get('location_id')))
                             ->viewData(fn (Get $get): array => ['profitability' => self::profitabilityPreview($get('items') ?? [], $get('location_id'))['summary'] ?? []]),
@@ -145,11 +156,38 @@ class SalesOrderForm
         ])->columns(1);
     }
 
+    private static function productOptions(Get $get): array
+    {
+        $selection = app(SalesProductSelection::class);
+        $query = $selection->products(auth()->user(), $get('../../location_id'));
+
+        return RequestDisplayData::remember('sales-form-product-options:'.json_encode([$query->toSql(), $query->getBindings(), $get('brand_id')], JSON_THROW_ON_ERROR),
+            fn (): array => $selection->productOptions(auth()->user(), $get('../../location_id'), '', $get('brand_id')));
+    }
+
+    private static function variantOptions(Get $get): array
+    {
+        $productIds = array_values(array_unique(array_column($get('../../items') ?? [], 'product_id')));
+        $selection = app(SalesProductSelection::class);
+        $query = $selection->variants(auth()->user(), $get('../../location_id'))->whereIn('product_id', $productIds);
+        if ($query->getQuery()->columns === null) {
+            $query->select('product_variants.*');
+        }
+        $query->selectRaw('ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY id) AS variant_option_rank');
+        $groups = RequestDisplayData::remember('sales-form-variant-options:'.json_encode([$get('../../location_id'), $productIds], JSON_THROW_ON_ERROR),
+            fn (): Collection => ProductVariant::query()->fromSub($query->toBase(), 'product_variants')
+                ->where('variant_option_rank', '<=', 50)->with(['product', 'color', 'size'])
+                ->orderBy('product_id')->orderBy('id')->get()->groupBy('product_id'));
+
+        return $groups->get($get('product_id'), collect())
+            ->mapWithKeys(fn (ProductVariant $variant): array => [$variant->id => $selection->label($variant)])->all();
+    }
+
     private static function totalsPreview(Get $get): array
     {
         try {
             $calculator = app(PurchaseOrderCalculator::class);
-            $lines = array_map(fn (array $line): array => self::price($line, $get('location_id')), $get('items') ?? []);
+            $lines = array_map(fn (array $line): array => self::price($line, $get('location_id'), $get('items') ?? []), $get('items') ?? []);
             $totals = $calculator->totals($lines);
 
             return ['totals' => $totals];
@@ -171,7 +209,7 @@ class SalesOrderForm
         try {
             $lines = [];
             foreach ($items as $id => $item) {
-                $lines[$id] = self::price($item, $locationId) + ['variant_id' => (int) ($item['variant_id'] ?? 0)];
+                $lines[$id] = self::price($item, $locationId, $items) + ['variant_id' => (int) ($item['variant_id'] ?? 0)];
             }
             $service = app(SalesProfitability::class);
             $estimates = $service->estimates($lines, $locationId);
@@ -184,35 +222,47 @@ class SalesOrderForm
         return $result;
     }
 
-    private static function price(array $line, ?int $locationId): array
+    private static function price(array $line, ?int $locationId, array $items = []): array
     {
+        $line = Arr::only($line, ['product_id', 'variant_id', 'quantity', 'unit_price', 'discount_id', 'tax_ids']);
         $cacheKey = 'fox.sales-line-price.'.hash('sha256', json_encode([$locationId, $line], JSON_THROW_ON_ERROR));
-        if (request()->attributes->has($cacheKey)) {
-            return request()->attributes->get($cacheKey);
-        }
-        $variant = app(SalesProductSelection::class)->variants(auth()->user(), $locationId, false)
-            ->where('product_id', $line['product_id'] ?? null)->with('product')->find($line['variant_id'] ?? null);
-        if ($variant === null) {
+        $variant = self::displayVariants($items === [] ? [$line] : $items, $locationId)->get($line['variant_id'] ?? null);
+        if ($variant === null || (string) $variant->product_id !== (string) ($line['product_id'] ?? '')) {
             throw ValidationException::withMessages(['variant_id' => __('Choose an active saleable variant belonging to the selected product.')]);
         }
 
-        $result = app(SalesLinePricing::class)->line($variant, Arr::only($line, ['quantity', 'unit_price', 'discount_id', 'tax_ids']));
-        request()->attributes->set($cacheKey, $result);
-
-        return $result;
+        return RequestDisplayData::remember($cacheKey, fn (): array => app(SalesLinePricing::class)->line($variant, Arr::only($line, ['quantity', 'unit_price', 'discount_id', 'tax_ids'])));
     }
 
     private static function variant(Get $get): ?ProductVariant
     {
-        return app(SalesProductSelection::class)->variants(auth()->user(), $get('../../location_id'), false)
-            ->where('product_id', $get('product_id'))->with('product')->find($get('variant_id'));
+        $variant = self::displayVariants($get('../../items') ?? [], $get('../../location_id'))->get($get('variant_id'));
+
+        return $variant !== null && (string) $variant->product_id === (string) $get('product_id') ? $variant : null;
+    }
+
+    private static function displayVariants(array $items, ?int $locationId): Collection
+    {
+        $query = app(SalesProductSelection::class)->variants(auth()->user(), $locationId, false);
+        $ids = array_values(array_unique(array_column($items, 'variant_id')));
+        RequestDisplayData::remember('sales-form-definitions:'.json_encode($items, JSON_THROW_ON_ERROR), function () use ($items): bool {
+            app(CommercialDefinitions::class)->primeDisplayInputs($items, 'sales');
+
+            return true;
+        });
+
+        return RequestDisplayData::remember('sales-form-variants:'.json_encode([$locationId, $ids], JSON_THROW_ON_ERROR),
+            fn (): Collection => $query->whereKey($ids)->with(['product', 'size', 'color',
+                'product.discounts' => fn ($query) => $query->whereIn('discounts.id', app(CommercialDefinitions::class)->eligible('discounts', 'sales')->select('id'))->orderBy('discounts.id'),
+                'product.taxes' => fn ($query) => $query->whereIn('taxes.id', app(CommercialDefinitions::class)->eligible('taxes', 'sales')->select('id'))->orderBy('taxes.id'),
+            ])->get()->keyBy('id'));
     }
 
     private static function discounts(Get $get): Collection
     {
         $variant = self::variant($get);
 
-        return $variant === null ? collect() : app(SalesLinePricing::class)->discounts($variant->product);
+        return $variant === null ? collect() : $variant->product->discounts;
     }
 
     private static function unsupportedDiscount(Get $get): bool
@@ -227,15 +277,15 @@ class SalesOrderForm
     {
         $variant = self::variant($get);
 
-        return $variant === null ? [] : app(SalesLinePricing::class)->taxes($variant->product)
+        return $variant === null ? [] : $variant->product->taxes
             ->mapWithKeys(fn ($tax): array => [$tax->id => $tax->name.' · '.NumericFormatter::definition($tax->rate, $tax->type)])->all();
     }
 
     private static function amountCell(string $field, string $label, bool $emphasized = false): View
     {
-        return View::make('components.commercial-line-value')->viewData(function (Get $get) use ($field, $label, $emphasized): array {
+        return View::make('components.commercial-line-value')->key($field)->viewData(function (Get $get) use ($field, $label, $emphasized): array {
             try {
-                $line = self::price(Arr::only($get(), ['product_id', 'variant_id', 'quantity', 'unit_price', 'discount_id', 'tax_ids']), $get('../../location_id'));
+                $line = self::price(Arr::only($get(), ['product_id', 'variant_id', 'quantity', 'unit_price', 'discount_id', 'tax_ids']), $get('../../location_id'), $get('../../items') ?? []);
 
                 return ['field' => $field, 'label' => __($label), 'value' => $line[$field], 'kind' => NumericFormatter::kind($field) ?? 'money', 'emphasized' => $emphasized];
             } catch (ValidationException $exception) {

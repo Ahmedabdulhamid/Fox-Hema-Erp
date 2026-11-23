@@ -28,7 +28,16 @@ class PurchaseReceiptForm
             ]),
             Repeater::make('items')->label(__('Receipt lines'))->addable(false)->deletable(false)->reorderable(false)->columns(3)->schema([
                 Hidden::make('id')->required(),
-                ProductLinePreview::make(self::class, 'id', fn (Get $get, array $ids, ?Model $record): Collection => $record === null ? collect() : ProductLinePreview::byKeys($record->items()->getQuery(), $ids)->with(['purchaseOrderItem.variant.images', 'purchaseOrderItem.variant.product.images'])->get()->keyBy('id'), 'purchaseOrderItem.variant'),
+                ProductLinePreview::make(self::class, 'id', function (Get $get, array $ids, ?Model $record): Collection {
+                    if ($record === null) {
+                        return collect();
+                    }
+                    $record->loadMissing(['items.purchaseOrderItem.variant.images', 'items.purchaseOrderItem.variant.product.images']);
+                    $keys = array_map('strval', $ids);
+
+                    return $record->items->filter(fn (Model $item): bool => in_array((string) $item->getKey(), $keys, true)
+                        || in_array((string) $item->uuid, $keys, true))->keyBy('id');
+                }, 'purchaseOrderItem.variant'),
                 TextInput::make('variant_label')->label(__('Product variant'))->disabled()->dehydrated(false),
                 TextInput::make('ordered')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Ordered quantity'))->disabled()->dehydrated(false),
                 TextInput::make('expected')->formatStateUsing(fn (?string $state): string => QuantityFormatter::format($state))->label(__('Expected quantity'))->disabled()->dehydrated(false),

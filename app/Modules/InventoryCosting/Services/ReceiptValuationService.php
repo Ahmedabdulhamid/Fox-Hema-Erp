@@ -11,11 +11,13 @@ use App\Modules\InventoryCosting\Models\InventoryCostState;
 use App\Modules\InventoryCosting\Models\InventoryStandardCost;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
+use App\Modules\Purchasing\Services\PurchaseLinePricing;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class ReceiptValuationService
@@ -24,15 +26,25 @@ class ReceiptValuationService
      * Resolve receipt-side costing only. The caller owns document locks and the transaction.
      *
      * @param  list<PurchaseReceiptItem>  $items
-     * @return array<int, array{method: string, unit_cost: string, revision_id: ?int}>
+     * @param  array<int, string>  $receivedQuantities  Previously posted quantity by PO line.
+     * @return array<int, array{method: string, unit_cost: string, acquisition_unit_cost: string, acquisition_value: string, commercial_snapshot: array<string, mixed>, revision_id: ?int}>
      */
-    public function prepare(array $items, CarbonInterface $postedAt): array
+    public function prepare(array $items, CarbonInterface $postedAt, array $receivedQuantities = []): array
     {
         $this->assertTransaction();
         abort_unless(app(ModuleAccess::class)->isActive('inventory_costing'), 403);
         $plans = [];
         foreach ($items as $item) {
-            $variant = $item->purchaseOrderItem->variant;
+            $purchaseOrderItem = $item->purchaseOrderItem;
+            $variant = $purchaseOrderItem->variant;
+            $commercial = app(PurchaseLinePricing::class)->allocate(
+                $purchaseOrderItem->commercial_snapshot ?? ['discount' => null, 'taxes' => []],
+                $item->quantity,
+                $item->unit_cost,
+                $purchaseOrderItem->quantity,
+                $receivedQuantities[$purchaseOrderItem->id] ?? '0',
+                'items.'
+            );
             if (InventoryCostState::where('variant_id', $variant->id)->whereNull('location_id')->lockForUpdate()->exists()) {
                 $this->invalid('Legacy aggregate cost state requires approved reconciliation before receiving this variant.');
             }
@@ -60,9 +72,12 @@ class ReceiptValuationService
                 $cost = $revision->new_cost;
                 $revisionId = (int) $revision->id;
             }
+            $acquisitionValue = $commercial['commercial_snapshot']['inventory_acquisition_amount'];
+            $acquisitionUnitCost = $commercial['commercial_snapshot']['inventory_acquisition_unit_cost'];
             $plans[$item->id] = ['method' => $setting->costing_method,
-                'unit_cost' => app(PurchaseOrderCalculator::class)->decimal($cost, 'valuation', 18, 6),
-                'revision_id' => $revisionId];
+                'unit_cost' => $setting->costing_method === 'standard' ? app(PurchaseOrderCalculator::class)->decimal($cost, 'valuation', 18, 6) : $acquisitionUnitCost,
+                'acquisition_unit_cost' => $acquisitionUnitCost, 'acquisition_value' => $acquisitionValue,
+                'commercial_snapshot' => $commercial['commercial_snapshot'], 'revision_id' => $revisionId];
         }
 
         return $plans;
@@ -74,7 +89,7 @@ class ReceiptValuationService
      *
      * @param  list<PurchaseReceiptItem>  $items  Sorted by variant then item ID.
      * @param  list<StockMovement>  $movements  Same order as items.
-     * @param  array<int, array{method: string, unit_cost: string, revision_id: ?int}>  $plans
+     * @param  array<int, array{method: string, unit_cost: string, acquisition_unit_cost: string, acquisition_value: string, commercial_snapshot: array<string, mixed>, revision_id: ?int}>  $plans
      */
     public function post(array $items, array $movements, array $plans, int $locationId, CarbonInterface $postedAt): void
     {
@@ -137,13 +152,13 @@ class ReceiptValuationService
                 || $movement->inventoryCostEntry()->exists() || $movement->fifoLayer()->exists()) {
                 $this->invalid('Receipt movement identity is inconsistent or already valued.');
             }
-            $purchase = $calculator->decimal((string) BigDecimal::of($item->quantity)->multipliedBy($item->unit_cost)->toScale(4, RoundingMode::HalfUp), 'purchase_value');
+            $purchase = $calculator->decimal($plan['acquisition_value'], 'purchase_value');
             $state = $states[$variantId];
             $nextQty = BigDecimal::of($state->on_hand_qty)->plus($item->quantity);
             // Standard receipts change the rounded closing target, never revalue opening stock.
             $valueDelta = $plan['method'] === 'standard'
                 ? $nextQty->multipliedBy($plan['unit_cost'])->toScale(4, RoundingMode::HalfUp)->minus($state->total_value)
-                : BigDecimal::of($item->quantity)->multipliedBy($plan['unit_cost'])->toScale(4, RoundingMode::HalfUp);
+                : BigDecimal::of($purchase);
             if ($valueDelta->isNegative()) {
                 $this->invalid('Receipt valuation cannot reduce inventory carrying value.');
             }
@@ -151,12 +166,15 @@ class ReceiptValuationService
             $variance = BigDecimal::of($purchase)->minus($valuation)->toScale(4);
             InventoryCostEntry::create(['stock_movement_id' => $movement->id, 'method' => $plan['method'],
                 'quantity' => $item->quantity, 'unit_cost' => $plan['unit_cost'], 'total_cost' => $valuation,
-                'entry_type' => 'receipt', 'purchase_unit_cost' => $item->unit_cost, 'purchase_value' => $purchase,
-                'purchase_price_variance' => (string) $variance, 'standard_cost_revision_id' => $plan['revision_id']]);
+                'entry_type' => 'receipt', 'purchase_unit_cost' => $plan['acquisition_unit_cost'], 'purchase_value' => $purchase,
+                'purchase_price_variance' => (string) $variance, 'standard_cost_revision_id' => $plan['revision_id'],
+                'purchase_commercial_snapshot' => $plan['commercial_snapshot']]);
             if ($plan['method'] === 'fifo') {
-                FifoLayer::create(['variant_id' => $variantId, 'stock_movement_id' => $movement->id,
-                    'quantity' => $item->quantity, 'remaining_qty' => $item->quantity,
-                    'unit_cost' => $plan['unit_cost'], 'received_at' => $postedAt]);
+                DB::table('fifo_layers')->insert(['uuid' => (string) Str::uuid7(), 'variant_id' => $variantId,
+                    'stock_movement_id' => $movement->id, 'quantity' => $item->quantity,
+                    'remaining_qty' => $item->quantity, 'unit_cost' => $plan['unit_cost'], 'received_at' => $postedAt,
+                    'initial_value' => $valuation, 'remaining_value' => $valuation, 'available_at' => $postedAt,
+                    'created_at' => now(), 'updated_at' => now()]);
             }
             $nextValue = BigDecimal::of($state->total_value)->plus($valuation);
             $state->fill(['on_hand_qty' => $calculator->decimal((string) $nextQty, 'on_hand_qty', 18, 4),

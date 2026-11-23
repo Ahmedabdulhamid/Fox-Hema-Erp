@@ -6,6 +6,7 @@ use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Payments\Models\Payment;
+use App\Modules\POS\Services\PosAccess;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -79,7 +80,7 @@ class PaymentService
             $this->lockRegistry();
             $payment = Payment::whereKey($payment->id)->lockForUpdate()->firstOrFail();
             $this->authorizeOperation($actor, PaymentsPermissions::POST, (int) $payment->location_id);
-            $this->owned($payment);
+            $this->owned($payment, $actor);
             if ($payment->isSettlementReceipt() && ! CustomerPayments::isPosting()) {
                 $this->invalid('payment', 'Use the customer payment posting workflow.');
             }
@@ -96,6 +97,9 @@ class PaymentService
                 $payload += $payment->only(['customer_id', 'treasury_account_id']);
                 $payload['payment_date'] = $payment->payment_date->format('Y-m-d');
             }
+            if ($payment->pos_session_id !== null || $payment->pos_transaction_id !== null) {
+                $payload += $payment->only(['pos_session_id', 'pos_transaction_id']);
+            }
             $this->matchFingerprint($payment, $this->fingerprints->make('payments', 'create', $payload + ['actor_id' => $payment->created_by]));
 
             return $this->markPosted($payment, $actor);
@@ -109,7 +113,7 @@ class PaymentService
             $this->lockRegistry();
             $payment = Payment::whereKey($payment->id)->lockForUpdate()->firstOrFail();
             $this->authorizeOperation($actor, PaymentsPermissions::REVERSE, (int) $payment->location_id);
-            $this->owned($payment);
+            $this->owned($payment, $actor);
             if ($payment->isSettlementReceipt()) {
                 $this->invalid('payment', 'Use allocation release and customer refunds to correct customer receipts.');
             }
@@ -163,10 +167,16 @@ class PaymentService
         }
     }
 
-    private function owned(Payment $payment): void
+    private function owned(Payment $payment, User $actor): void
     {
-        if ($payment->origin_module !== 'payments' || $payment->pos_session_id !== null || $payment->pos_transaction_id !== null) {
+        if ($payment->origin_module !== 'payments') {
             $this->invalid('payment', 'This transaction belongs to another workflow.');
+        }
+        if ($payment->pos_session_id !== null || $payment->pos_transaction_id !== null) {
+            if (! CustomerPayments::isPosting()) {
+                $this->invalid('payment', 'Use the authorized POS customer payment workflow.');
+            }
+            app(PosAccess::class)->payment($actor, $payment);
         }
     }
 

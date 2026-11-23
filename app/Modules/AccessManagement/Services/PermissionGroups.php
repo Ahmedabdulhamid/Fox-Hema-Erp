@@ -5,6 +5,7 @@ namespace App\Modules\AccessManagement\Services;
 use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\Permission;
 use App\Modules\AccessManagement\Models\User;
+use Illuminate\Support\Facades\Lang;
 
 class PermissionGroups
 {
@@ -13,18 +14,37 @@ class PermissionGroups
     {
         $allowedGroups = $this->options($actor);
         $groups = Module::query()->orderBy('sort_order')->orderBy('name')->pluck('name')
-            ->mapWithKeys(fn (string $name): array => [$name => $allowedGroups[$name] ?? []])->all();
+            ->mapWithKeys(fn (string $name): array => [$this->groupLabel($name) => $allowedGroups[$name] ?? []])->all();
+        $groups += collect($allowedGroups)->mapWithKeys(fn (array $permissions, string $group): array => [
+            $this->groupLabel($group) => $permissions,
+        ])->all();
 
-        return collect($groups + $allowedGroups)->map(fn (array $permissions): array => collect($permissions)
-            ->map(fn (string $name, int $id): array => ['id' => $id, 'name' => $name, 'label' => __($name)])
+        return collect($groups)->map(fn (array $permissions): array => collect($permissions)
+            ->map(fn (string $name, int $id): array => ['id' => $id, 'name' => $name, 'label' => $this->label($name)])
             ->values()->all())->all();
     }
 
     public function localizedOptions(User $actor): array
     {
         return collect($this->options($actor))->mapWithKeys(fn (array $permissions, string $group): array => [
-            __($group) => array_map(fn (string $name): string => __($name), $permissions),
+            $this->groupLabel($group) => array_map(fn (string $name): string => $this->label($name), $permissions),
         ])->all();
+    }
+
+    public function label(string $permission): string
+    {
+        $key = 'permissions.'.$permission;
+        $locale = app()->getLocale();
+
+        return Lang::has($key, $locale, false) ? Lang::get($key, [], $locale, false) : $permission;
+    }
+
+    public function groupLabel(string $group): string
+    {
+        $key = 'permissions_ui.groups.'.$group;
+        $locale = app()->getLocale();
+
+        return Lang::has($key, $locale, false) ? Lang::get($key, [], $locale, false) : __($group);
     }
 
     public function options(User $actor): array

@@ -26,6 +26,9 @@ class TreasuryAccess
         $scope = getPermissionsTeamId();
         abort_unless($scope !== null && RequestAuthorizationFacts::locationIsActive((int) $scope)
             && RequestAuthorizationFacts::actorHasLocation($actor, (int) $scope), 403);
+        if ($locationId !== null && (int) $scope !== $locationId) {
+            abort_unless(RequestAuthorizationFacts::actorHasLocation($actor, $locationId), 403);
+        }
         if ($locationId === null || (int) $scope !== $locationId) {
             $read = in_array($permission, [TreasuryPermissions::VIEW, TreasuryPermissions::BALANCES], true);
             $modules->authorize($actor, 'treasury', $read
@@ -49,7 +52,11 @@ class TreasuryAccess
         if ($actor->can(TreasuryPermissions::VIEW_ALL_LOCATIONS)) {
             $this->authorize($actor, TreasuryPermissions::VIEW_ALL_LOCATIONS, $scope === null ? null : (int) $scope);
 
-            return $query;
+            $assignedLocations = $actor->locations()->where('locations.is_active', true)->select('locations.id');
+
+            return $query->where(function (Builder $query) use ($assignedLocations): void {
+                $query->whereIn('location_id', $assignedLocations)->orWhereNull('location_id');
+            });
         }
 
         return $query->where('location_id', $scope);

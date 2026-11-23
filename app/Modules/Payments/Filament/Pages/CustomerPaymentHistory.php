@@ -2,6 +2,7 @@
 
 namespace App\Modules\Payments\Filament\Pages;
 
+use App\Filament\ReadModelCache;
 use App\Modules\Payments\Models\Customer;
 use App\Modules\Payments\Services\CustomerAccess;
 use App\Modules\Payments\Services\CustomerFinancials;
@@ -75,7 +76,7 @@ class CustomerPaymentHistory extends Page
         $this->validate(['from' => ['nullable', 'date_format:Y-m-d'], 'until' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'kind' => ['in:,receipt,refund,recovery,allocation,release,invoice,credit'], 'search' => ['string', 'max:191']], [], __('payments.validation_attributes'));
 
-        return ['schemaReady' => true, 'customers' => $customers, 'rows' => app(CustomerFinancials::class)->history(auth()->user(), $this->customer, $this->from, $this->until, $this->search, $this->kind)->paginate(25),
+        return ['schemaReady' => true, 'customers' => $customers, 'rows' => app(ReadModelCache::class)->paginate('payments', app(CustomerFinancials::class)->history(auth()->user(), $this->customer, $this->from, $this->until, $this->search, $this->kind)),
             'balances' => $this->customer === null ? null : app(CustomerFinancials::class)->customer(auth()->user(), Customer::findOrFail($this->customer))];
     }
 }

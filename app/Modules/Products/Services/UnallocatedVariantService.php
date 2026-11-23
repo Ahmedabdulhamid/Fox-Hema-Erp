@@ -29,6 +29,7 @@ class UnallocatedVariantService
             $variant = new ProductVariant(['product_id' => $product->id]);
             $variant->unallocated_product_id = $product->id;
             $variant->save();
+            app(ProductCommercialEligibility::class)->refresh($product);
 
             return $variant;
         }, 3);

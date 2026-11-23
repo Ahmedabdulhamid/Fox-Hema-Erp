@@ -32,6 +32,7 @@ use App\Modules\Taxes\Services\DefinitionPermissions;
 use App\Modules\Taxes\Services\TaxManager;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
+use Filament\Forms\Components\TextInput;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -143,15 +144,20 @@ class TaxesDiscountsManagementTest extends TestCase
     public function test_filament_crud_search_filters_and_slug_urls(string $kind, string $model, string $manager, string $create, string $edit, string $view, string $list, string $amount): void
     {
         $this->admin();
-        Livewire::test($create)->fillForm(['name' => 'UI definition', 'code' => 'UI', $amount => '10.0000'])->call('create')->assertHasNoFormErrors();
-        $definition = $model::where('code', 'UI')->firstOrFail();
+        Livewire::test($create)->assertFormFieldIsHidden('code')
+            ->fillForm(['name' => 'UI definition', $amount => '10.0000'])->call('create')->assertHasNoFormErrors();
+        $definition = $model::where('name', 'UI definition')->firstOrFail();
+        $this->assertMatchesRegularExpression($kind === 'taxes' ? '/^TAX-\d{4,}$/D' : '/^DIS-\d{4,}$/D', $definition->code);
         $other = $model::factory()->create(['name' => 'Other', 'is_active' => false]);
         Livewire::test($list)->assertCanSeeTableRecords([$definition, $other])
             ->searchTable('UI definition')->assertCanSeeTableRecords([$definition])->assertCanNotSeeTableRecords([$other]);
         Livewire::test($list)->filterTable('is_active', true)->assertCanSeeTableRecords([$definition])->assertCanNotSeeTableRecords([$other]);
         Livewire::test($view, ['record' => $definition->slug])->assertSuccessful();
         $this->get('/admin/'.$kind.'/'.$definition->slug)->assertOk();
-        Livewire::test($edit, ['record' => $definition->slug])->fillForm(['name' => 'UI renamed'])->call('save')->assertHasNoFormErrors();
+        Livewire::test($edit, ['record' => $definition->slug])
+            ->assertFormSet(['code' => $definition->code])
+            ->assertFormFieldExists('code', fn (TextInput $field): bool => $field->isReadOnly())
+            ->fillForm(['name' => 'UI renamed'])->call('save')->assertHasNoFormErrors();
         $this->assertSame('UI renamed', $definition->fresh()->name);
         Livewire::test($edit, ['record' => $definition->slug])->callAction('delete')->assertHasNoFormErrors();
         $this->assertDatabaseMissing($kind, ['id' => $definition->id]);

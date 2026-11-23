@@ -4,6 +4,7 @@ namespace App\Modules\Products\Services;
 
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\InventoryCosting\Services\CategoryCostingManager;
 use App\Modules\Products\Enums\ProductStatus;
 use App\Modules\Products\Models\Brand;
@@ -15,7 +16,6 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -51,7 +51,7 @@ class ProductCatalogManager
                 }
             }
             abort_if(($costing !== null && $class !== Category::class) || ($simpleVariant !== null && $class !== Product::class), 403);
-            $rules = ['name' => ['required', 'string', 'max:255'], 'is_active' => ['sometimes', 'boolean']];
+            $rules = ['name' => ['required', 'string', 'max:255']];
             if ($class === Product::class) {
                 foreach (['has_fixed_selling_price', 'sale_price'] as $field) {
                     if (array_key_exists($field, $data) && (string) $data[$field] !== (string) $record->getAttribute($field)) {
@@ -60,6 +60,8 @@ class ProductCatalogManager
                 }
                 $rules['has_fixed_selling_price'] = ['sometimes', 'boolean'];
                 $rules['sale_price'] = ['nullable', 'numeric', 'decimal:0,4', 'min:0', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D'];
+            } else {
+                $rules['is_active'] = ['sometimes', 'boolean'];
             }
             if ($class === Brand::class) {
                 $rules['icon'] = ['nullable', 'string', 'max:255', function (string $attribute, mixed $value, Closure $fail) use ($record): void {
@@ -136,19 +138,12 @@ class ProductCatalogManager
                 }
                 if (! $record->exists) {
                     $data['status'] ??= 'draft';
-                    $data['is_active'] ??= false;
-                }
-                $status = $data['status'] ?? $record->status?->value ?? 'draft';
-                $active = $data['is_active'] ?? $record->is_active ?? false;
-                if ($status !== 'active') {
-                    $data['is_active'] = false;
-                    $active = false;
-                }
-                if ($active && ! $record->variants()->where('is_active', true)->whereRaw("TRIM(sku) <> ''")->where('sale_price', '>=', 0)->exists()) {
-                    $this->invalid('is_active', 'Activation requires a valid active variant.');
                 }
             }
             $record->fill($data)->save();
+            if ($record instanceof Product) {
+                app(ProductCommercialEligibility::class)->refresh($record);
+            }
 
             foreach ($assignments as $kind => $ids) {
                 $field = $kind === 'taxes' ? 'tax_ids' : 'discount_ids';
@@ -193,12 +188,21 @@ class ProductCatalogManager
     public function canDelete(Model $record): bool
     {
         return match ($record::class) {
-            Product::class => $record->status === ProductStatus::Draft && ! $record->variants()->exists(),
+            Product::class => $record->status === ProductStatus::Draft && ! $this->productHasVariants($record),
             Brand::class => ! $record->products()->exists(),
-            Category::class => ! $record->products()->exists() && ! $record->children()->exists() && (! Schema::hasTable('inventory_valuation_settings') || ! DB::table('inventory_valuation_settings')->where('category_id', $record->id)->exists()),
+            Category::class => ! $record->products()->exists() && ! $record->children()->exists() && (! RequestAuthorizationFacts::tableExists('inventory_valuation_settings') || ! DB::table('inventory_valuation_settings')->where('category_id', $record->id)->exists()),
             Size::class, Color::class => ! $record->variants()->exists(),
             default => false,
         };
+    }
+
+    private function productHasVariants(Product $product): bool
+    {
+        if (array_key_exists('variants_count', $product->getAttributes())) {
+            return (int) $product->getAttribute('variants_count') > 0;
+        }
+
+        return $product->variants()->exists();
     }
 
     public function delete(User $actor, Model $record): bool

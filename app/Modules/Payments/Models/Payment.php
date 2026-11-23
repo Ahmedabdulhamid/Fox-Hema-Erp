@@ -7,6 +7,8 @@ use App\Modules\Payments\Database\Factories\PaymentFactory;
 use App\Modules\Payments\Services\CustomerAccess;
 use App\Modules\Payments\Services\CustomerPayments;
 use App\Modules\Payments\Services\PaymentService;
+use App\Modules\POS\Models\PosSession;
+use App\Modules\POS\Models\PosTransaction;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -33,7 +35,8 @@ class Payment extends Model
 
     public function isSettlementReceipt(): bool
     {
-        return $this->customer_id !== null || $this->treasury_account_id !== null;
+        return $this->customer_id !== null || $this->treasury_account_id !== null
+            || ($this->pos_session_id !== null && $this->pos_transaction_id !== null);
     }
 
     public function save(array $options = []): bool
@@ -64,6 +67,16 @@ class Payment extends Model
         static::deleting(function (self $payment): void {
             throw ValidationException::withMessages(['payment' => __('Payment history cannot be deleted.')]);
         });
+    }
+
+    public function posSession(): BelongsTo
+    {
+        return $this->belongsTo(PosSession::class, 'pos_session_id');
+    }
+
+    public function posTransaction(): BelongsTo
+    {
+        return $this->belongsTo(PosTransaction::class, 'pos_transaction_id');
     }
 
     public function customer(): BelongsTo

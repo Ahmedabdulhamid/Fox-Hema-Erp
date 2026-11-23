@@ -9,6 +9,9 @@ class ModuleRegistryLock
     /** Serialize access-management mutations, including nullable global assignments, on MySQL. */
     public static function acquire(): void
     {
+        if (RequestAuthorizationFacts::holdsRegistryLock()) {
+            return;
+        }
         Module::query()->where('code', 'access_management')->lockForUpdate()->first();
     }
 }

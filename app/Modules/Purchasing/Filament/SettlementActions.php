@@ -2,6 +2,8 @@
 
 namespace App\Modules\Purchasing\Filament;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Models\MoneyFormatter;
 use App\Modules\Purchasing\Filament\Resources\VendorPayments\VendorPaymentResource;
 use App\Modules\Purchasing\Models\VendorBill;
@@ -52,7 +54,7 @@ class SettlementActions
                 ->schema([
                     Hidden::make('operation_key')->default(fn (): string => (string) Str::uuid7())->required(),
                     Select::make('payment_id')->label(__('Available advance'))->required()->searchable()
-                        ->options(fn (): array => collect(app(SupplierFinancialOverview::class)->report(auth()->user(), (int) $bill->supplier_id, $locationId)['advances'])
+                        ->options(fn (): array => collect(app(SupplierFinancialOverview::class)->reportForDisplay(auth()->user(), (int) $bill->supplier_id, $locationId)['advances'])
                             ->mapWithKeys(fn ($payment): array => [$payment->id => $payment->payment_number.' | '.MoneyFormatter::format($payment->unallocated)])->all()),
                     TextInput::make('amount')->label(__('Allocation amount'))->inputMode('decimal')->required(),
                 ])->action(function (Action $action, array $data) use ($bill): void {
@@ -63,12 +65,16 @@ class SettlementActions
                 ->visible(fn (): bool => $bill->status === 'posted' && self::allows(PurchasingPermissions::PAYMENTS_CREATE, $locationId)
                     && self::allows(PurchasingPermissions::PAYMENTS_POST, $locationId) && self::allows(PurchasingPermissions::PAYMENTS_ALLOCATE, $locationId))
                 ->fillForm(fn (): array => ['supplier_id' => $bill->supplier_id, 'location_id' => $locationId, 'payment_date' => now()->toDateString(),
-                    'amount' => app(SupplierFinancialBalances::class)->bill(auth()->user(), $bill)['outstanding'],
+                    'amount' => app(SupplierFinancialBalances::class)->billForDisplay(auth()->user(), $bill)['outstanding'],
                     'operation_key' => (string) Str::uuid7(), 'allocation_key' => (string) Str::uuid7()])
-                ->schema(fn (Schema $schema): Schema => VendorPaymentResource::form($schema)->components([
-                    ...VendorPaymentResource::form($schema)->getComponents(),
-                    Hidden::make('operation_key')->required(), Hidden::make('allocation_key')->required(),
-                ]))->action(function (Action $action, array $data) use ($bill): void {
+                ->schema(function (Schema $schema): Schema {
+                    $paymentForm = VendorPaymentResource::form($schema);
+
+                    return $paymentForm->components([
+                        ...$paymentForm->getComponents(),
+                        Hidden::make('operation_key')->required(), Hidden::make('allocation_key')->required(),
+                    ]);
+                })->action(function (Action $action, array $data) use ($bill): void {
                     $key = $data['operation_key'];
                     $allocationKey = $data['allocation_key'];
                     unset($data['operation_key'], $data['allocation_key']);
@@ -81,18 +87,16 @@ class SettlementActions
     /** @return list<Action> */
     public static function payment(VendorPayment $payment, ?Closure $displayAmounts = null): array
     {
-        /** @var array{allocated: string, unallocated: string}|null $paymentAmounts */
-        $paymentAmounts = null;
-        $getPaymentAmounts = function () use ($payment, $displayAmounts, &$paymentAmounts): array {
-            return $paymentAmounts ??= $displayAmounts === null
-                ? app(SupplierFinancialBalances::class)->payment(auth()->user(), $payment)
+        $getPaymentAmounts = function () use ($payment, $displayAmounts): array {
+            return $displayAmounts === null
+                ? app(SupplierFinancialBalances::class)->paymentForDisplay(auth()->user(), $payment)
                 : $displayAmounts();
         };
         $isFullyAllocated = fn (): bool => BigDecimal::of($getPaymentAmounts()['unallocated'])->isZero();
         $billOptions = function (?string $search = null, mixed $billId = null) use ($payment): array {
             app(VendorPaymentAccess::class)->operation(auth()->user(), PurchasingPermissions::PAYMENTS_ALLOCATE, (int) $payment->location_id);
 
-            return VendorBill::query()->where('supplier_id', $payment->supplier_id)->where('status', 'posted')
+            $query = VendorBill::query()->where('supplier_id', $payment->supplier_id)->where('status', 'posted')
                 ->whereHas('purchaseOrder', fn ($query) => $query->where('location_id', $payment->location_id)->where('supplier_id', $payment->supplier_id))
                 ->whereRaw('vendor_bills.total_amount > COALESCE((
                     SELECT SUM(vendor_payment_allocations.amount)
@@ -105,12 +109,15 @@ class SettlementActions
                 ), 0)', ['posted'])
                 ->when($billId !== null, fn ($query) => $query->whereKey($billId))
                 ->when(filled($search), fn ($query) => $query->where('bill_number', 'like', '%'.$search.'%'))
-                ->orderByDesc('id')->limit(50)->pluck('bill_number', 'id')->all();
+                ->orderByDesc('id')->limit(50);
+
+            return RequestDisplayData::remember('supplier.bill-selector:'.json_encode([$query->toSql(), $query->getBindings()], JSON_THROW_ON_ERROR),
+                fn (): array => app(ReadModelCache::class)->options('purchasing', $query, 'bill_number'));
         };
         $allocationOptions = function (?string $search = null, mixed $allocationId = null) use ($payment): array {
             app(VendorPaymentAccess::class)->operation(auth()->user(), PurchasingPermissions::PAYMENTS_REVERSE, (int) $payment->location_id);
 
-            return VendorPaymentAllocation::query()
+            $query = VendorPaymentAllocation::query()
                 ->join('vendor_bills as bills', 'bills.id', '=', 'vendor_payment_allocations.vendor_bill_id')
                 ->join('purchase_orders as orders', 'orders.id', '=', 'bills.purchase_order_id')
                 ->where('vendor_payment_allocations.vendor_payment_id', $payment->id)
@@ -121,11 +128,13 @@ class SettlementActions
                 ->where('orders.supplier_id', $payment->supplier_id)
                 ->when($allocationId !== null, fn ($query) => $query->where('vendor_payment_allocations.id', $allocationId))
                 ->when(filled($search), fn ($query) => $query->where('bills.bill_number', 'like', '%'.$search.'%'))
-                ->orderByDesc('vendor_payment_allocations.id')->limit(50)
-                ->get(['vendor_payment_allocations.id', 'vendor_payment_allocations.amount', 'bills.bill_number'])
-                ->mapWithKeys(fn (VendorPaymentAllocation $allocation): array => [
-                    $allocation->id => $allocation->bill_number.' | '.MoneyFormatter::format($allocation->amount),
-                ])->all();
+                ->orderByDesc('vendor_payment_allocations.id')->limit(50);
+
+            return RequestDisplayData::remember('supplier.allocation-selector:'.json_encode([$query->toSql(), $query->getBindings()], JSON_THROW_ON_ERROR),
+                fn (): array => app(ReadModelCache::class)->remember('purchasing', ['allocation-selector', $query->toSql(), $query->getBindings()], fn (): array => $query->get(['vendor_payment_allocations.id', 'vendor_payment_allocations.amount', 'bills.bill_number'])
+                    ->mapWithKeys(fn (VendorPaymentAllocation $allocation): array => [
+                        $allocation->id => $allocation->bill_number.' | '.MoneyFormatter::format($allocation->amount),
+                    ])->all(), config('read_cache.report_ttl'), $query->getConnection()));
         };
 
         return [Action::make('allocateBills')->label(__('Allocate to bills'))->modal()

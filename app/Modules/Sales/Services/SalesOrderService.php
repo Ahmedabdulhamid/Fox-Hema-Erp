@@ -5,6 +5,7 @@ namespace App\Modules\Sales\Services;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\POS\Data\PosContext;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Services\SellingPriceResolver;
@@ -24,11 +25,27 @@ class SalesOrderService
 
     public function create(User $actor, array $data, string $submissionId): SalesOrder
     {
+        return $this->createOrder($actor, $data, $submissionId);
+    }
+
+    public function createForPos(User $actor, array $data, PosContext $posContext): SalesOrder
+    {
+        return $this->createOrder($actor, $data, $posContext->orderSubmissionId(), $posContext);
+    }
+
+    private function createOrder(User $actor, array $data, string $submissionId, ?PosContext $posContext = null): SalesOrder
+    {
         Validator::make(['submission_id' => $submissionId], ['submission_id' => ['required', 'uuid']])->validate();
         $submissionId = strtolower($submissionId);
 
-        return DB::transaction(function () use ($actor, $data, $submissionId): SalesOrder {
+        return DB::transaction(function () use ($actor, $data, $submissionId, $posContext): SalesOrder {
             ModuleRegistryLock::acquire();
+            if ($posContext !== null) {
+                $posContext->validate($actor);
+                if ((int) ($data['location_id'] ?? 0) !== $posContext->locationId) {
+                    $this->invalid('location_id', 'POS orders must belong to the terminal branch.');
+                }
+            }
             $this->authorize($actor, SalesPermissions::CREATE);
             $existing = SalesOrder::where('uuid', $submissionId)->lockForUpdate()->first();
             [$header, $lines] = $this->prepare($actor, $data);
@@ -52,7 +69,7 @@ class SalesOrderService
 
                     return $values;
                 })->all();
-                if ($existing->status !== 'draft' || $storedHeader !== $header
+                if ($existing->channel !== ($posContext === null ? 'manual' : 'pos') || $existing->status !== 'draft' || $storedHeader !== $header
                     || SalesPricingSnapshot::normalize($storedLines) !== SalesPricingSnapshot::normalize(array_values($lines))) {
                     $this->invalid('submission_id', 'This submission identity was already used for different order details.');
                 }
@@ -64,7 +81,7 @@ class SalesOrderService
             $order->order_number = app(DocumentNumberService::class)->allocate((int) $header['location_id'], 'SO', $submissionId);
             $order->status = 'draft';
             $order->fulfillment_status = 'unfulfilled';
-            $order->channel = 'manual';
+            $order->channel = $posContext === null ? 'manual' : 'pos';
             $order->created_by = $actor->id;
             $order->save();
             foreach ($lines as $line) {
@@ -153,7 +170,7 @@ class SalesOrderService
 
     public function formItems(SalesOrder $order): array
     {
-        return $order->items()->with(['variant.stockBalances' => fn ($query) => $query->where('location_id', $order->location_id)])
+        return $order->items()->with(['variant.product', 'variant.stockBalances' => fn ($query) => $query->where('location_id', $order->location_id)])
             ->orderBy('id')->get()->map(fn (SalesOrderItem $item): array => [
                 'product_id' => $item->variant->product_id,
                 'brand_id' => $item->variant->product?->brand_id,

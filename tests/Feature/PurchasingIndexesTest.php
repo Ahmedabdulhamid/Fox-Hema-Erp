@@ -82,7 +82,8 @@ class PurchasingIndexesTest extends TestCase
         $this->assertTrue(Schema::hasIndex('purchase_orders', ['order_number'], 'unique'));
         $this->assertTrue(Schema::hasIndex('vendor_bills', ['supplier_id', 'bill_number'], 'unique'));
         $this->assertTrue(Schema::hasIndex('vendor_bills', ['supplier_id', 'due_date']));
-        $this->assertTrue(Schema::hasIndex('vendor_payment_allocations', ['vendor_payment_id', 'vendor_bill_id'], 'unique'));
+        $this->assertTrue(Schema::hasIndex('vendor_payment_allocations', ['vendor_payment_id', 'vendor_bill_id']));
+        $this->assertTrue(Schema::hasIndex('vendor_payment_allocations', ['operation_key'], 'unique'));
         $this->assertTrue(Schema::hasIndex('vendor_bill_receipt_matches', ['vendor_bill_item_id', 'purchase_receipt_item_id'], 'unique'));
 
         $migration->up();

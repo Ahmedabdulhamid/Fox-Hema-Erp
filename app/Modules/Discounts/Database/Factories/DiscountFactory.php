@@ -19,6 +19,7 @@ class DiscountFactory extends Factory
             'type' => 'percentage',
             'value' => '10.0000',
             'scope' => 'product',
+            'supplier_id' => null,
             'is_active' => true,
             'starts_at' => null,
             'ends_at' => null,

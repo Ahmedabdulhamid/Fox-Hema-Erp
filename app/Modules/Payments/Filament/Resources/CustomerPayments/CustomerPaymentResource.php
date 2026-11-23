@@ -2,6 +2,8 @@
 
 namespace App\Modules\Payments\Filament\Resources\CustomerPayments;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Modules\Payments\Models\Customer;
 use App\Modules\Payments\Models\Payment;
 use App\Modules\Payments\Models\PaymentMethod;
@@ -73,7 +75,9 @@ class CustomerPaymentResource extends Resource
 
     public static function customers(): array
     {
-        return app(CustomerAccess::class)->scope(Customer::query(), auth()->user())->where('is_active', true)->pluck('name', 'id')->all();
+        $query = app(CustomerAccess::class)->scope(Customer::query(), auth()->user())->where('is_active', true);
+
+        return app(ReadModelCache::class)->options('payments', $query);
     }
 
     public static function form(Schema $schema): Schema
@@ -82,7 +86,7 @@ class CustomerPaymentResource extends Resource
             Select::make('customer_id')->label(__('Customer'))->options(fn () => static::customers())->searchable()->required()->live(),
             DatePicker::make('payment_date')->label(__('payments.fields.payment_date'))->default(now()->toDateString())->maxDate(now())->required(),
             TextInput::make('amount')->label(__('payments.fields.amount'))->suffix(__('payments.currency'))->inputMode('decimal')->required(),
-            Select::make('payment_method_id')->label(__('Payment method'))->options(fn () => PaymentMethod::where('is_active', true)->whereIn('type', ['cash', 'bank_transfer'])->pluck('name', 'id'))->required()->live(),
+            Select::make('payment_method_id')->label(__('Payment method'))->options(fn (): array => app(ReadModelCache::class)->options('payments', PaymentMethod::where('is_active', true)->whereIn('type', ['cash', 'bank_transfer'])))->required()->live(),
             Select::make('treasury_account_id')->label(__('Receiving Treasury account'))->options(fn (Get $get) => static::accounts($get('customer_id'), $get('payment_method_id')))->searchable()->required(),
             TextInput::make('external_reference')->label(__('payments.fields.external_reference'))->maxLength(191), Textarea::make('notes')->maxLength(16000)]);
     }
@@ -99,11 +103,14 @@ class CustomerPaymentResource extends Resource
 
     public static function accountsForLocation(int $location, mixed $methodId): array
     {
-        $type = PaymentMethod::whereKey($methodId)->where('is_active', true)->value('type');
+        $type = RequestDisplayData::remember('payment-method.active-type:'.json_encode($methodId, JSON_THROW_ON_ERROR),
+            fn () => PaymentMethod::whereKey($methodId)->where('is_active', true)->value('type'));
         $options = [];
         foreach (app(TreasuryAccounts::class)->visible(auth()->user()) as $account) {
             if (! $account->is_active || (int) $account->location_id !== $location || $account->currency !== 'EGP' ||
-            ! (($type === 'cash' && $account->type !== 'bank') || (in_array($type, ['bank_transfer', 'card'], true) && $account->type === 'bank'))) {
+                ! (($type === 'cash' && in_array($account->type, ['branch_cashbox', 'location_cashbox'], true))
+                    || ($type === 'bank_transfer' && $account->type === 'bank')
+                    || ($type === 'card' && in_array($account->type, ['bank', 'provider_settlement'], true)))) {
                 continue;
             }
             try {

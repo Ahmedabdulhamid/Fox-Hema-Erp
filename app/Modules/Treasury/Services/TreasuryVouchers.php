@@ -31,14 +31,14 @@ class TreasuryVouchers
     {
         Validator::make(compact('kind', 'accountType'), [
             'kind' => ['required', Rule::in(['receipt', 'payment', 'transfer', 'opening'])],
-            'accountType' => ['required', Rule::in(['branch_cashbox', 'central_cashbox', 'location_cashbox', 'bank'])],
+            'accountType' => ['required', Rule::in(['branch_cashbox', 'central_cashbox', 'location_cashbox', 'bank', 'provider_settlement'])],
         ])->validate();
 
         return match ($kind) {
             'transfer' => 'transfer',
             'opening' => 'opening_balance',
-            'receipt' => $accountType === 'bank' ? 'bank_deposit' : 'cash_deposit',
-            'payment' => $accountType === 'bank' ? 'bank_withdrawal' : 'cash_withdrawal',
+            'receipt' => in_array($accountType, ['bank', 'provider_settlement'], true) ? 'bank_deposit' : 'cash_deposit',
+            'payment' => in_array($accountType, ['bank', 'provider_settlement'], true) ? 'bank_withdrawal' : 'cash_withdrawal',
         };
     }
 }

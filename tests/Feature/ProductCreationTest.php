@@ -15,6 +15,7 @@ use App\Modules\Products\Models\Color;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Models\Size;
+use App\Modules\Products\Services\ProductCatalogManager;
 use App\Modules\Products\Services\ProductCreationManager;
 use App\Modules\Products\Services\ProductImageManager;
 use App\Modules\Taxes\Models\Tax;
@@ -66,12 +67,18 @@ class ProductCreationTest extends TestCase
                 $page->assertSee(__($label));
             }
             $page->assertFormFieldExists('name')->assertFormFieldExists('description')
-                ->assertFormFieldExists('variants')->assertFormFieldExists('images');
+                ->assertFormFieldExists('variants')->assertFormFieldExists('images')->assertFormFieldDoesNotExist('is_active');
         }
-        Livewire::test(CreateProduct::class)->fillForm(['name' => 'Basic product'])->call('create')->assertHasNoFormErrors();
+        Livewire::test(CreateProduct::class)->fillForm(['name' => 'Basic product', 'status' => 'active'])->call('create')->assertHasNoFormErrors();
         $product = Product::where('name', 'Basic product')->sole();
         $this->assertFalse($product->is_active);
         $this->assertSame(0, $product->variants()->count());
+        app(ProductCatalogManager::class)->save(auth()->user(), Product::class, [
+            'name' => 'Basic product',
+            'status' => 'active',
+            'is_active' => true,
+        ], $product);
+        $this->assertFalse($product->fresh()->is_active);
     }
 
     public function test_filament_creates_variants_and_generates_missing_identifiers(): void
@@ -80,12 +87,14 @@ class ProductCreationTest extends TestCase
         $color = Color::factory()->create();
         Livewire::test(CreateProduct::class)->fillForm([
             'name' => 'With variants',
+            'status' => 'active',
             'variants' => [
                 ['size_id' => $size->id, 'sale_price' => '12.5000', 'cost_price' => '5.0000', 'is_active' => true],
                 ['color_id' => $color->id, 'sale_price' => '15.0000'],
             ],
         ])->call('create')->assertHasNoFormErrors();
         $product = Product::where('name', 'With variants')->sole();
+        $this->assertTrue($product->is_active);
         $this->assertSame(2, $product->variants()->count());
         $generated = $product->variants()->where('size_id', $size->id)->sole();
         $this->assertMatchesRegularExpression('/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/', $generated->sku);
@@ -147,7 +156,12 @@ class ProductCreationTest extends TestCase
         $this->assertSame(1, $product->taxes()->count());
         $this->assertSame(1, $product->discounts()->count());
         Livewire::test(EditProduct::class, ['record' => $product->getRouteKey()])
-            ->fillForm(['name' => 'Edited', 'is_active' => true])->call('save')->assertHasNoFormErrors();
+            ->assertFormFieldDoesNotExist('is_active')->fillForm(['name' => 'Edited'])->call('save')->assertHasNoFormErrors();
+        app(ProductCatalogManager::class)->save(auth()->user(), Product::class, [
+            'name' => 'Edited',
+            'status' => 'active',
+            'is_active' => false,
+        ], $product);
         $this->assertTrue($product->fresh()->is_active);
         $this->assertSame(1, $product->images()->count());
         $this->assertSame(1, $product->variants()->count());

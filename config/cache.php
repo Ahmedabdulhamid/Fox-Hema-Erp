@@ -81,7 +81,8 @@ return [
         'redis' => [
             'driver' => 'redis',
             'connection' => env('REDIS_CACHE_CONNECTION', 'cache'),
-            'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
+            'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'cache'),
+            'prefix' => env('REDIS_CACHE_PREFIX', 'fox-hema:'.Str::slug((string) env('APP_ENV', 'production')).':cache:'),
         ],
 
         'dynamodb' => [

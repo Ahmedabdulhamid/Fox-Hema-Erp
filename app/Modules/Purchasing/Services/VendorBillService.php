@@ -7,6 +7,7 @@ use App\Modules\AccessManagement\Services\AuditLogger;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
 use App\Modules\Purchasing\Models\PurchaseReceiptItem;
@@ -15,6 +16,7 @@ use App\Modules\Purchasing\Models\VendorBillReceiptMatch;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -45,8 +47,9 @@ class VendorBillService
             $this->authorize($actor, PurchasingPermissions::BILLS_CREATE, $order);
             $header = $this->header($data, $order);
             $lines = $this->lines($order, $data['items'] ?? []);
-            $header += app(PurchaseSettlementTerms::class)->validate($data, $this->calculator->totals($lines)['total_amount']);
-            $bill = new VendorBill($header + $this->calculator->totals($lines) + ['status' => 'draft', 'created_by' => $actor->id]);
+            $totals = $this->calculator->totals($lines);
+            $header += app(PurchaseSettlementTerms::class)->validate($data, $totals['total_amount']);
+            $bill = new VendorBill($header + $totals + ['status' => 'draft', 'created_by' => $actor->id]);
             $bill->uuid = (string) Str::uuid7();
             app(DocumentNumberService::class)->allocate((int) $order->location_id, 'BILL', $bill->uuid);
             $bill->save();
@@ -66,14 +69,15 @@ class VendorBillService
             $this->checkRevision($bill, $revision);
             $header = $this->header($data, $order);
             $lines = $this->lines($order, $data['items'] ?? []);
-            $header += app(PurchaseSettlementTerms::class)->validate($data, $this->calculator->totals($lines)['total_amount']);
-            foreach ($bill->items()->orderBy('id')->get() as $item) {
+            $totals = $this->calculator->totals($lines);
+            $header += app(PurchaseSettlementTerms::class)->validate($data, $totals['total_amount']);
+            foreach ($bill->items()->with('receiptMatches')->orderBy('id')->get() as $item) {
                 foreach ($item->receiptMatches as $match) {
                     $match->delete();
                 }
                 $item->delete();
             }
-            $bill->fill($header + $this->calculator->totals($lines))->save();
+            $bill->fill($header + $totals)->save();
             $this->saveLines($bill, $lines);
             $this->audit($actor, $bill, 'vendor_bill_draft_updated');
 
@@ -93,9 +97,12 @@ class VendorBillService
             $this->checkRevision($bill, $revision);
             $this->header($bill->only(['supplier_id', 'purchase_order_id', 'bill_number', 'bill_date', 'due_date', 'notes']), $order);
             app(PurchaseSettlementTerms::class)->validate($bill->only(['settlement_terms', 'planned_immediate_amount', 'bill_date', 'due_date']), $bill->total_amount);
-            $items = $bill->items()->orderBy('id')->lockForUpdate()->get();
+            $items = $bill->items()->orderBy('id')->lockForUpdate()
+                ->with(['receiptMatches' => fn (HasMany $matches): HasMany => $matches
+                    ->orderBy('purchase_receipt_item_id')->lockForUpdate()])
+                ->get();
             $data = $items->map(fn ($item): array => $item->only(['variant_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount'])
-                + ['allocations' => $item->receiptMatches()->orderBy('purchase_receipt_item_id')->lockForUpdate()->get()
+                + ['allocations' => $item->receiptMatches
                     ->map(fn ($match): array => ['purchase_receipt_item_id' => $match->purchase_receipt_item_id, 'quantity' => $match->matched_quantity])->all()])->all();
             $lines = $this->lines($order, $data);
             foreach ($this->calculator->totals($lines) as $field => $amount) {
@@ -145,35 +152,58 @@ class VendorBillService
 
     public function revision(VendorBill $bill): string
     {
-        return hash('sha256', json_encode([$bill->getAttributes(), $bill->items()->orderBy('id')->get()->map(fn ($item): array => [
-            $item->getAttributes(), $item->receiptMatches()->orderBy('id')->get()->map->getAttributes()->all(),
+        return hash('sha256', json_encode([$bill->getAttributes(), $bill->items()->with(['receiptMatches' => fn ($query) => $query->orderBy('id')])->orderBy('id')->get()->map(fn ($item): array => [
+            $item->getAttributes(), $item->receiptMatches->map->getAttributes()->all(),
         ])->all()], JSON_THROW_ON_ERROR));
     }
 
     public function prefill(User $actor, PurchaseOrder $order, ?PurchaseReceipt $receipt = null): array
     {
-        $this->authorize($actor, PurchasingPermissions::BILLS_CREATE, $order);
-        $this->access->authorize($actor, PurchasingPermissions::ORDERS_VIEW, (int) $order->location_id);
-        $this->access->authorize($actor, PurchasingPermissions::RECEIPTS_VIEW, (int) $order->location_id);
+        RequestAuthorizationFacts::duringRead(function () use ($actor, $order): void {
+            $this->authorize($actor, PurchasingPermissions::BILLS_CREATE, $order);
+            $this->access->authorize($actor, PurchasingPermissions::ORDERS_VIEW, (int) $order->location_id);
+            $this->access->authorize($actor, PurchasingPermissions::RECEIPTS_VIEW, (int) $order->location_id);
+        });
         if ($receipt !== null && ((int) $receipt->purchase_order_id !== (int) $order->id || $receipt->status !== 'posted'
             || (int) $receipt->location_id !== (int) $order->location_id)) {
             $this->invalid('receipt', 'Select a posted receipt belonging to this purchase order and location.');
         }
         $items = [];
-        foreach ($this->receiptLines($order) as $line) {
-            if ($receipt !== null && (int) $line->purchase_receipt_id !== (int) $receipt->id) {
-                continue;
-            }
-            $remaining = $this->remaining($line);
-            if (! BigDecimal::of($remaining)->isPositive()) {
-                continue;
-            }
+        $lines = $this->receiptItemsQuery($order)->when($receipt !== null, fn ($query) => $query->where('purchase_receipt_id', $receipt->id))
+            ->select(['id', 'purchase_order_id', 'purchase_receipt_id', 'purchase_order_item_id', 'quantity', 'unit_cost'])->get();
+        $billedByOrderLine = $this->billedQuantitiesByOrderLine($order);
+        $billedByReceiptItem = $lines->isEmpty() ? collect() : VendorBillReceiptMatch::whereIn('purchase_receipt_item_id', $lines->modelKeys())
+            ->whereHas('vendorBillItem.vendorBill', fn ($query) => $query->where('status', 'posted'))
+            ->selectRaw('purchase_receipt_item_id, SUM(matched_quantity) as billed_quantity')
+            ->groupBy('purchase_receipt_item_id')->pluck('billed_quantity', 'purchase_receipt_item_id');
+        $remainingByReceiptItem = $lines->mapWithKeys(fn (PurchaseReceiptItem $line): array => [
+            $line->id => (string) BigDecimal::of($line->quantity)->minus($billedByReceiptItem->get($line->id, '0'))->toScale(4)]);
+        $lines = $lines->filter(fn (PurchaseReceiptItem $line): bool => BigDecimal::of($remainingByReceiptItem[$line->id])->isPositive());
+        $lines->load(['purchaseOrderItem:id,variant_id,quantity,discount_amount,tax_amount',
+            'purchaseOrderItem.variant:id,product_id,unallocated_product_id,color_id,size_id',
+            'purchaseOrderItem.variant.product:id,name', 'purchaseOrderItem.variant.color:id,name',
+            'purchaseOrderItem.variant.size:id,name']);
+        $currentBillQuantities = [];
+        foreach ($lines as $line) {
+            $remaining = $remainingByReceiptItem[$line->id];
             $poLine = $line->purchaseOrderItem;
-            $items[] = ['variant_id' => $poLine->variant_id, 'description' => $poLine->variant->displayName(),
+            $item = ['variant_id' => $poLine->variant_id, 'description' => $poLine->variant->displayName(),
                 'quantity' => $remaining, 'unit_price' => $line->unit_cost,
-                'discount_amount' => $this->prorate($poLine->discount_amount, $remaining, $poLine->quantity),
-                'tax_amount' => $this->prorate($poLine->tax_amount, $remaining, $poLine->quantity),
                 'allocations' => [['purchase_receipt_item_id' => $line->id, 'quantity' => $remaining]]];
+            if ($poLine->commercial_snapshot !== null) {
+                $alreadyBilled = (string) BigDecimal::of($billedByOrderLine[$poLine->id] ?? '0')
+                    ->plus($currentBillQuantities[$poLine->id] ?? '0')->toScale(4);
+                $pricing = app(PurchaseLinePricing::class)->allocate($poLine->commercial_snapshot, $remaining,
+                    $line->unit_cost, $poLine->quantity, $alreadyBilled);
+                $item['discount_amount'] = $pricing['discount_amount'];
+                $item['tax_amount'] = $pricing['tax_amount'];
+                $currentBillQuantities[$poLine->id] = (string) BigDecimal::of($currentBillQuantities[$poLine->id] ?? '0')
+                    ->plus($remaining)->toScale(4);
+            } else {
+                $item['discount_amount'] = $this->prorate($poLine->discount_amount, $remaining, $poLine->quantity);
+                $item['tax_amount'] = $this->prorate($poLine->tax_amount, $remaining, $poLine->quantity);
+            }
+            $items[] = $item;
         }
         if ($items === []) {
             $this->invalid('items', 'There are no posted receipt quantities available to bill.');
@@ -195,8 +225,14 @@ class VendorBillService
 
     public function receiptLines(PurchaseOrder $order): Collection
     {
+        return $this->receiptItemsQuery($order)->with(['purchaseReceipt', 'purchaseOrderItem.variant.product',
+            'purchaseOrderItem.variant.color', 'purchaseOrderItem.variant.size'])->get();
+    }
+
+    private function receiptItemsQuery(PurchaseOrder $order): HasMany
+    {
         return $order->receiptItems()->whereHas('purchaseReceipt', fn ($query) => $query->where('status', 'posted')
-            ->where('location_id', $order->location_id))->with(['purchaseReceipt', 'purchaseOrderItem.variant.product'])->orderBy('id')->get();
+            ->where('location_id', $order->location_id))->orderBy('id');
     }
 
     private function header(array $data, PurchaseOrder $order): array
@@ -229,14 +265,16 @@ class VendorBillService
             'items.*.allocations.*' => ['array'], 'items.*.allocations.*.purchase_receipt_item_id' => ['required', 'integer']])->validate();
         $order->receipts()->orderBy('id')->lockForUpdate()->get();
         $receipts = $order->receiptItems()->with(['purchaseReceipt', 'purchaseOrderItem'])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $billedByOrderLine = $this->billedQuantitiesByOrderLine($order);
         $aggregate = [];
         $lines = [];
+        $currentBillQuantities = [];
         foreach (array_values($data) as $index => $line) {
             $prefix = 'items.'.$index.'.';
             if (array_diff(array_keys($line), ['variant_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'allocations']) !== []) {
                 $this->invalid($prefix.'quantity', 'Bill status, totals and audit fields are controlled by bill operations.');
             }
-            $calculated = $this->calculator->line($line, $prefix);
+            $base = $this->calculator->line(['quantity' => $line['quantity'] ?? null, 'unit_price' => $line['unit_price'] ?? null], $prefix);
             $sum = BigDecimal::zero();
             $seen = [];
             $poLineId = null;
@@ -267,31 +305,55 @@ class VendorBillService
                 $aggregate[$receipt->id] = (string) BigDecimal::of($aggregate[$receipt->id] ?? '0')->plus($quantity);
                 $allocations[] = ['purchase_receipt_item_id' => $receipt->id, 'matched_quantity' => $quantity];
             }
-            if (! $sum->isEqualTo($calculated['quantity'])) {
+            if (! $sum->isEqualTo($base['quantity'])) {
                 $this->invalid($prefix.'quantity', 'Matched quantities must equal the bill line quantity.');
             }
             $source = $receipts->get(array_key_first($seen))->purchaseOrderItem;
             if ($source->commercial_snapshot !== null) {
-                foreach (['discount_amount', 'tax_amount'] as $field) {
-                    if (! BigDecimal::of($calculated[$field])->isZero()) {
-                        $this->invalid($prefix.$field, 'This purchase order supports only configured zero tax and no supplier discount.');
-                    }
-                }
-                $calculated['commercial_snapshot'] = ['purchase_order_pricing' => $source->commercial_snapshot,
-                    'purchase_order_item_id' => $source->id, 'quantity' => $calculated['quantity'],
-                    'unit_price' => $calculated['unit_price'], 'subtotal' => $calculated['subtotal'],
-                    'discount_amount' => $calculated['discount_amount'], 'tax_amount' => $calculated['tax_amount'],
-                    'line_total' => $calculated['line_total'], 'inventory_revaluation' => false];
+                $alreadyBilled = (string) BigDecimal::of($billedByOrderLine[$source->id] ?? '0')
+                    ->plus($currentBillQuantities[$source->id] ?? '0')->toScale(4);
+                $pricing = app(PurchaseLinePricing::class)->allocate($source->commercial_snapshot,
+                    $base['quantity'], $base['unit_price'], $source->quantity, $alreadyBilled, $prefix);
+                $calculated = $pricing;
+                $calculated['commercial_snapshot'] = ['version' => 1,
+                    'purchase_order_pricing' => $source->commercial_snapshot,
+                    'purchase_order_item_id' => $source->id,
+                    'calculation' => $pricing['commercial_snapshot'],
+                    'inventory_revaluation' => false];
+                $currentBillQuantities[$source->id] = (string) BigDecimal::of($currentBillQuantities[$source->id] ?? '0')
+                    ->plus($calculated['quantity'])->toScale(4);
+            } else {
+                $calculated = $this->calculator->line($line, $prefix);
             }
             $lines[] = $calculated + Arr::only($line, ['variant_id', 'description']) + ['allocations' => $allocations];
         }
+        $billedByReceipt = $aggregate === [] ? collect() : VendorBillReceiptMatch::query()
+            ->whereIn('purchase_receipt_item_id', array_keys($aggregate))
+            ->whereHas('vendorBillItem.vendorBill', fn ($query) => $query->where('status', 'posted'))
+            ->selectRaw('purchase_receipt_item_id, SUM(matched_quantity) as billed_quantity')
+            ->groupBy('purchase_receipt_item_id')->pluck('billed_quantity', 'purchase_receipt_item_id');
         foreach ($aggregate as $receiptId => $quantity) {
-            if (BigDecimal::of($quantity)->isGreaterThan($this->remaining($receipts[$receiptId]))) {
+            $remaining = BigDecimal::of($receipts[$receiptId]->quantity)
+                ->minus($billedByReceipt->get($receiptId, '0'))->toScale(4);
+            if (BigDecimal::of($quantity)->isGreaterThan($remaining)) {
                 $this->invalid('items', 'Bill quantity exceeds the remaining posted receipt quantity.');
             }
         }
 
         return $lines;
+    }
+
+    /** @return array<int, string> */
+    private function billedQuantitiesByOrderLine(PurchaseOrder $order): array
+    {
+        return DB::table('vendor_bill_receipt_matches as matches')
+            ->join('purchase_receipt_items as receipt_items', 'receipt_items.id', '=', 'matches.purchase_receipt_item_id')
+            ->join('vendor_bill_items as bill_items', 'bill_items.id', '=', 'matches.vendor_bill_item_id')
+            ->join('vendor_bills as bills', 'bills.id', '=', 'bill_items.vendor_bill_id')
+            ->where('receipt_items.purchase_order_id', $order->id)->where('bills.status', 'posted')
+            ->groupBy('receipt_items.purchase_order_item_id')
+            ->selectRaw('receipt_items.purchase_order_item_id, SUM(matches.matched_quantity) AS billed_quantity')
+            ->pluck('billed_quantity', 'receipt_items.purchase_order_item_id')->all();
     }
 
     private function saveLines(VendorBill $bill, array $lines): void

@@ -5,6 +5,7 @@ namespace App\Modules\Products\Services;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
@@ -28,7 +29,9 @@ class VariantInventoryValuation
 {
     public function canView(?User $actor): bool
     {
-        $actor?->unsetRelation('roles')->unsetRelation('permissions');
+        if ($actor !== null) {
+            RequestAuthorizationFacts::refreshPermissionRelations($actor);
+        }
 
         return app(ProductsAccess::class)->allows($actor, 'products.view')
             && app(ModuleAccess::class)->isActive('inventory_costing')
@@ -52,7 +55,7 @@ class VariantInventoryValuation
         Gate::forUser($actor)->authorize('view', $variant);
         Gate::forUser($actor)->authorize('view', $variant->product);
         if ($locationId !== null) {
-            abort_unless(Location::whereKey($locationId)->where('is_active', true)->exists(), 403);
+            abort_unless(RequestAuthorizationFacts::locationIsActive($locationId), 403);
             app(InventoryAccess::class)->authorize($actor, InventoryPermissions::BALANCES, $locationId);
             app(InventoryAccess::class)->authorize($actor, InventoryPermissions::COST, $locationId);
         }

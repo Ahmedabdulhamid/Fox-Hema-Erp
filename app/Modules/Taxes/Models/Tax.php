@@ -27,6 +27,7 @@ class Tax extends Model
         'rate',
         'price_inclusion',
         'usage',
+        'purchase_treatment',
         'is_active',
         'effective_from',
         'effective_to',

@@ -3,6 +3,7 @@
 namespace App\Modules\AccessManagement\Filament\Resources\Permissions;
 
 use App\Modules\AccessManagement\Models\Permission;
+use App\Modules\AccessManagement\Services\PermissionGroups;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
@@ -58,10 +59,10 @@ class PermissionResource extends Resource
     {
         return $schema->components([
             Section::make(__('Permission overview'))->icon('heroicon-o-key')->columns(2)->columnSpanFull()->extraAttributes(['class' => 'fox-record-section'])->schema([
-                TextEntry::make('name')->label(__('Permission'))->formatStateUsing(fn (string $state): string => __($state))->weight('bold'),
+                TextEntry::make('name')->label(__('Permission'))->formatStateUsing(fn (string $state): string => app(PermissionGroups::class)->label($state))->weight('bold'),
                 TextEntry::make('permission_code')->label(__('Permission code'))->state(fn (Permission $record): string => $record->name)->copyable()->fontFamily('mono'),
                 TextEntry::make('guard_name')->label(__('Guard'))->badge(),
-                TextEntry::make('module_name')->label(__('Module'))->formatStateUsing(fn (?string $state): string => __($state ?? 'Unmapped historical permissions'))->badge()->color('info'),
+                TextEntry::make('module_name')->label(__('Module'))->formatStateUsing(fn (?string $state): string => app(PermissionGroups::class)->groupLabel($state ?? 'Unmapped historical permissions'))->badge()->color('info'),
                 TextEntry::make('created_at')->label(__('Created at'))->dateTime()->placeholder(__('Not recorded')),
             ]),
         ]);
@@ -70,10 +71,10 @@ class PermissionResource extends Resource
     public static function table(Table $table): Table
     {
         return $table->columns([
-            TextColumn::make('name')->label(__('Permission'))->formatStateUsing(fn (string $state): string => __($state))->searchable(['permissions.name'])->sortable(['permissions.name']),
-            TextColumn::make('module_name')->label(__('Module'))->formatStateUsing(fn (string $state): string => __($state)),
+            TextColumn::make('name')->label(__('Permission'))->formatStateUsing(fn (string $state): string => app(PermissionGroups::class)->label($state))->searchable(['permissions.name'])->sortable(['permissions.name']),
+            TextColumn::make('module_name')->label(__('Module'))->formatStateUsing(fn (string $state): string => app(PermissionGroups::class)->groupLabel($state)),
             TextColumn::make('guard_name')->label(__('Guard')),
-        ])->defaultGroup(Group::make('module_name')->label(__('Module'))->getTitleFromRecordUsing(fn (Permission $record): string => __($record->module_name)))->recordActions([ViewAction::make()]);
+        ])->defaultGroup(Group::make('module_name')->label(__('Module'))->getTitleFromRecordUsing(fn (Permission $record): string => app(PermissionGroups::class)->groupLabel($record->module_name)))->recordActions([ViewAction::make()]);
     }
 
     public static function getPages(): array

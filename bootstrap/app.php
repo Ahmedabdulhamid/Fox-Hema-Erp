@@ -1,9 +1,11 @@
 <?php
 
 use App\Http\Middleware\BeginAuthorizationRequest;
+use App\Http\Middleware\BindPosOfflineContext;
 use App\Http\Middleware\SetLocale;
 use App\Modules\AccessManagement\Http\Middleware\EnsureModuleActive;
 use App\Modules\AccessManagement\Http\Middleware\ResetLocationPermissionContext;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -16,10 +18,14 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withSchedule(function (Schedule $schedule): void {
+        $schedule->command('backups:automation')->everyMinute()->withoutOverlapping(10);
+    })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias(['module.active' => EnsureModuleActive::class]);
         $middleware->web(prepend: [BeginAuthorizationRequest::class]);
-        $middleware->web(append: [SetLocale::class, ResetLocationPermissionContext::class]);
+        $middleware->web(append: [SetLocale::class, ResetLocationPermissionContext::class, BindPosOfflineContext::class]);
+        $middleware->encryptCookies(except: ['fox_pos_context']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->respond(function (Response $response, Throwable $exception, Request $request) {

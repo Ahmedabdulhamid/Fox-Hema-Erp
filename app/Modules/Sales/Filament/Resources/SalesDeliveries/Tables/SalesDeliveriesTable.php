@@ -11,6 +11,7 @@ use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class SalesDeliveriesTable
 {
@@ -39,7 +40,7 @@ class SalesDeliveriesTable
                 return Location::where('type', 'branch')->where('is_active', true)
                     ->when(! $actor->isGlobalSuperAdmin(), fn ($query) => $query->whereKey(getPermissionsTeamId()))->pluck('name', 'id')->all();
             }),
-        ])->recordActions([ViewAction::make(), EditAction::make(), SalesDeliveryActions::post(), SalesDeliveryActions::cancel()])
+        ])->recordAction(null)->modifyQueryUsing(fn (Builder $query): Builder => $query->without(['items', 'postedBy', 'cancelledBy']))->recordActions([ViewAction::make(), EditAction::make(), SalesDeliveryActions::post(), SalesDeliveryActions::cancel()])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 }

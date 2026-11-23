@@ -2,6 +2,7 @@
 
 namespace App\Modules\Purchasing\Services;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\Payments\Services\PaymentMethods;
 use App\Modules\Purchasing\Models\VendorPayment;
@@ -43,9 +44,12 @@ class VendorPaymentTreasury
         return $account;
     }
 
-    public function assertLinked(VendorPayment $payment, bool $allowRecovery = false): TreasuryOperation
+    public function assertLinked(VendorPayment $payment, bool $allowRecovery = false, bool $lockForUpdate = true): TreasuryOperation
     {
-        $operation = $payment->treasuryOperation()->lockForUpdate()->first();
+        $operation = $lockForUpdate
+            ? $payment->treasuryOperation()->lockForUpdate()->first()
+            : RequestDisplayData::remember('supplier.payment-treasury-movement.'.$payment->id,
+                fn (): ?TreasuryOperation => $payment->treasuryOperation()->first());
         if ($operation === null || $operation->status !== 'posted' || $operation->type !== 'payment_disbursement'
             || (int) $operation->account_id !== (int) $payment->treasury_account_id || $operation->amount !== $payment->amount
             || $operation->currency !== $payment->currency || $operation->source_reference !== $payment->uuid
@@ -58,8 +62,9 @@ class VendorPaymentTreasury
 
     public function authorizeRecovery(User $actor, VendorPayment $payment): void
     {
-        $this->assertLinked($payment, allowRecovery: true);
-        $account = TreasuryAccount::whereKey($payment->treasury_account_id)->lockForUpdate()->firstOrFail();
+        $this->assertLinked($payment, allowRecovery: true, lockForUpdate: false);
+        $account = RequestDisplayData::remember('supplier.payment-source-account.'.$payment->treasury_account_id,
+            fn (): TreasuryAccount => TreasuryAccount::findOrFail($payment->treasury_account_id));
         if (! $account->is_active || $account->currency !== 'EGP') {
             throw ValidationException::withMessages(['treasury_account_id' => 'Recovery requires the original active EGP account.']);
         }
@@ -81,14 +86,15 @@ class VendorPaymentTreasury
 
     public function movement(User $actor, VendorPayment $payment): ?TreasuryOperation
     {
-        $payment = VendorPayment::findOrFail($payment->id);
         app(VendorPaymentAccess::class)->authorize($actor, PurchasingPermissions::PAYMENTS_VIEW, $payment->location_id);
         if ($payment->treasury_account_id === null) {
             return null;
         }
-        $account = TreasuryAccount::findOrFail($payment->treasury_account_id);
+        $account = RequestDisplayData::remember('supplier.payment-source-account.'.$payment->treasury_account_id,
+            fn (): TreasuryAccount => TreasuryAccount::findOrFail($payment->treasury_account_id));
         $this->access->authorize($actor, TreasuryPermissions::VIEW, $account->location_id);
 
-        return $payment->treasuryOperation()->first();
+        return RequestDisplayData::remember('supplier.payment-treasury-movement.'.$payment->id,
+            fn (): ?TreasuryOperation => $payment->treasuryOperation()->first());
     }
 }

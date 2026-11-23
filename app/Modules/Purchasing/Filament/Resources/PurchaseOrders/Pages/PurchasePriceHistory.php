@@ -2,6 +2,7 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Pages;
 
+use App\Filament\ReadModelCache;
 use App\Models\QuantityFormatter;
 use App\Modules\Products\Filament\MasterDetail;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\PurchaseOrderResource;
@@ -38,6 +39,8 @@ class PurchasePriceHistory extends Page implements HasTable
 
     public function table(Table $table): Table
     {
+        $statusOptions = PurchaseOrdersTable::statuses();
+
         return $table->query(fn (): Builder => app(PurchaseOrderService::class)->history(auth()->user())->with(['variant.color', 'variant.size', 'variant.images', 'variant.product.images', 'variant.product.brand']))->columns([
             TextColumn::make('variant.product.name')->label(__('Product'))->searchable()->formatStateUsing(fn ($record) => view('components.commercial-product-cell', ['variant' => $record->variant])),
             TextColumn::make('variant.sku')->toggleable(isToggledHiddenByDefault: true)->label(__('Variant SKU'))->searchable(),
@@ -50,11 +53,11 @@ class PurchasePriceHistory extends Page implements HasTable
             TextColumn::make('discount_amount')->toggleable(isToggledHiddenByDefault: true)->label(__('Discount amount'))->sortable(),
             TextColumn::make('tax_amount')->toggleable(isToggledHiddenByDefault: true)->label(__('Tax amount'))->sortable(),
             TextColumn::make('line_total')->label(__('Line total (EGP)'))->sortable(),
-            TextColumn::make('purchaseOrder.status')->label(__('Document status'))->badge()->formatStateUsing(fn (string $state): string => PurchaseOrdersTable::statuses()[$state] ?? $state),
+            TextColumn::make('purchaseOrder.status')->label(__('Document status'))->badge()->formatStateUsing(fn (string $state): string => $statusOptions[$state] ?? $state),
         ])->filters([
             SelectFilter::make('variant_id')->label(__('Product variant'))->searchable()
                 ->relationship('variant', 'sku', fn (Builder $query): Builder => $query->whereIn('id', app(PurchaseOrderService::class)->variants(auth()->user(), false)->select('id'))),
-            SelectFilter::make('supplier')->label(__('Supplier'))->searchable()->options(fn (): array => app(PurchaseOrderService::class)->suppliers(auth()->user(), false)->pluck('name', 'id')->all())
+            SelectFilter::make('supplier')->label(__('Supplier'))->searchable()->options(fn (): array => app(ReadModelCache::class)->options('suppliers', app(PurchaseOrderService::class)->suppliers(auth()->user(), false)))
                 ->query(fn (Builder $query, array $data): Builder => $query->when($data['value'] ?? null, fn (Builder $query, $supplier): Builder => $query->whereHas('purchaseOrder', fn (Builder $orders): Builder => $orders->where('supplier_id', $supplier)))),
             PurchaseOrdersTable::dates()->query(fn (Builder $query, array $data): Builder => $query->whereHas('purchaseOrder', fn (Builder $orders): Builder => $orders
                 ->when($data['from'] ?? null, fn (Builder $orders, $date): Builder => $orders->whereDate('order_date', '>=', $date))
@@ -71,7 +74,7 @@ class PurchasePriceHistory extends Page implements HasTable
             TextEntry::make('discount_amount')->label(__('Discount amount')),
             TextEntry::make('tax_amount')->label(__('Tax amount')),
             TextEntry::make('line_total')->label(__('Line total (EGP)')),
-            TextEntry::make('purchaseOrder.status')->label(__('Document status'))->badge()->formatStateUsing(fn (string $state): string => PurchaseOrdersTable::statuses()[$state] ?? $state),
+            TextEntry::make('purchaseOrder.status')->label(__('Document status'))->badge()->formatStateUsing(fn (string $state): string => $statusOptions[$state] ?? $state),
         ])])])->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 

@@ -20,6 +20,8 @@ class CategoryForm
         return $schema->components([
             Section::make(__('Category details'))->icon('heroicon-o-folder')->columns(2)->columnSpanFull()->schema([
                 TextInput::make('name')->label(__('Name'))->required()->maxLength(255),
+                TextInput::make('code')->label(__('Code'))->readOnly()->dehydrated(false)
+                    ->visible(fn (?Category $record): bool => $record?->exists ?? false),
                 Select::make('parent_id')->label(__('Parent category'))
                     ->options(fn (?Category $record): array => Category::query()->whereNull('parent_id')->where('is_active', true)
                         ->when($record?->exists, fn ($query) => $query->whereKeyNot($record->getKey()))->orderBy('name')->pluck('name', 'id')->all())

@@ -24,7 +24,8 @@ class EditVendorBill extends EditRecord
     protected function mutateFormDataBeforeFill(array $data): array
     {
         $this->revision = app(VendorBillService::class)->revision($this->record);
-        $data['items'] = $this->record->items()->orderBy('id')->get()->map(fn ($item): array => $item->only([
+        $this->record->loadMissing('items.receiptMatches');
+        $data['items'] = $this->record->items->sortBy('id')->values()->map(fn ($item): array => $item->only([
             'variant_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount',
         ]) + ['allocations' => $item->receiptMatches->map(fn ($match): array => [
             'purchase_receipt_item_id' => $match->purchase_receipt_item_id, 'quantity' => $match->matched_quantity,

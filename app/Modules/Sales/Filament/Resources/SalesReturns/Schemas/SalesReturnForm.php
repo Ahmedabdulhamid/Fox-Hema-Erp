@@ -45,7 +45,7 @@ class SalesReturnForm
                         ->disabled(fn (Get $get): bool => filled($get('id')))->dehydrated()
                         ->options(fn (Get $get): array => app(DocumentSelectors::class)->lines(auth()->user(), 'return', $get('../../sales_order_id'), '', $get('brand_id'), $get('product_id')))
                         ->getSearchResultsUsing(fn (Get $get, string $search): array => app(DocumentSelectors::class)->lines(auth()->user(), 'return', $get('../../sales_order_id'), $search, $get('brand_id'), $get('product_id')))
-                        ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'return', $get('../../sales_order_id'), $value)),
+                        ->getOptionLabelUsing(fn (Get $get, $value): ?string => app(DocumentSelectors::class)->selectedLineLabel(auth()->user(), 'return', $get('../../sales_order_id'), $value, array_column($get('../../items') ?? [], 'sales_delivery_item_id'))),
                     Text::make(fn (Get $get): string => self::details($get)),
                     ProductLinePreview::make(self::class, 'sales_delivery_item_id', function (Get $get, array $ids): Collection {
                         $order = app(DocumentSelectors::class)->selectedOrder(auth()->user(), 'return', $get('../../sales_order_id'));
@@ -68,7 +68,7 @@ class SalesReturnForm
 
     private static function details(Get $get): string
     {
-        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'return', $get('../../sales_order_id'), $get('sales_delivery_item_id'));
+        $details = app(DocumentSelectors::class)->lineDetail(auth()->user(), 'return', $get('../../sales_order_id'), $get('sales_delivery_item_id'), array_column($get('../../items') ?? [], 'sales_delivery_item_id'));
 
         return collect(['delivered', 'posted', 'claimed', 'remaining'])->map(fn ($key) => __('returns.'.$key).': '.($details[$key] ?? '—'))->implode(' | ');
     }

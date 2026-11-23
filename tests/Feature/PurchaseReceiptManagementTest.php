@@ -8,6 +8,7 @@ use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\Role;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\LocationContext;
+use App\Modules\Discounts\Models\Discount;
 use App\Modules\Inventory\Data\StockPostingCommand;
 use App\Modules\Inventory\Enums\StockMovementType;
 use App\Modules\Inventory\Models\StockBalance;
@@ -22,6 +23,7 @@ use App\Modules\InventoryCosting\Services\ReceiptValuationService;
 use App\Modules\Products\Models\Category;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
+use App\Modules\Products\Models\Size;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Pages\ViewPurchaseOrder;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Pages\EditPurchaseReceipt;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Pages\ListPurchaseReceipts;
@@ -34,6 +36,7 @@ use App\Modules\Purchasing\Services\PurchaseOrderService;
 use App\Modules\Purchasing\Services\PurchaseReceiptService;
 use App\Modules\Purchasing\Services\PurchasingAccess;
 use App\Modules\Purchasing\Services\PurchasingPermissions;
+use App\Modules\Taxes\Models\Tax;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Filament\Facades\Filament;
@@ -156,6 +159,37 @@ class PurchaseReceiptManagementTest extends TestCase
         $this->actingAs($user);
 
         return $user;
+    }
+
+    public function test_known_and_explicit_unknown_receipts_keep_the_selected_inventory_and_cost_identity(): void
+    {
+        Module::where('code', 'products')->update(['is_active' => true]);
+        $this->variant->update(['size_id' => Size::factory()->create()->id]);
+        ProductVariant::factory()->create(['product_id' => $this->variant->product_id,
+            'size_id' => Size::factory()->create()->id]);
+        foreach (['known', 'unknown'] as $mode) {
+            $order = $this->order('10', '150', ['items' => [[
+                'product_id' => $this->variant->product_id, 'receiving_mode' => $mode,
+                'variant_id' => $mode === 'known' ? $this->variant->id : null,
+                'quantity' => '10', 'unit_price' => '150',
+            ]]]);
+            $selected = $order->items()->firstOrFail()->variant;
+            $this->assertSame($mode === 'unknown', $selected->isUnallocated());
+            $this->assertSame($mode === 'known' ? 2 : 3, $this->variant->product->variants()->count());
+            $receipt = $this->postReceipt($this->save($this->draft($order), ['10']));
+            $movement = $receipt->items->first()->stockMovement;
+            $this->assertSame($selected->id, $movement->variant_id);
+            $this->assertSame('10.0000', StockBalance::where('variant_id', $selected->id)
+                ->where('location_id', $this->location->id)->firstOrFail()->quantity_on_hand);
+            $state = InventoryCostState::where('variant_id', $selected->id)->where('location_id', $this->location->id)->firstOrFail();
+            $this->assertSame('10.0000', $state->on_hand_qty);
+            $this->assertSame('1500.0000', $state->total_value);
+            $this->assertSame($selected->id, FifoLayer::where('stock_movement_id', $movement->id)->firstOrFail()->variant_id);
+            $this->assertSame('1500.0000', InventoryCostEntry::where('stock_movement_id', $movement->id)->firstOrFail()->total_cost);
+            $beforeReplay = InventoryCostEntry::count();
+            $this->postReceipt($receipt);
+            $this->assertSame($beforeReplay, InventoryCostEntry::count());
+        }
     }
 
     public function test_confirmation_prepares_one_receipt_without_stock_or_valuation_and_retry_is_safe(): void
@@ -360,6 +394,46 @@ class PurchaseReceiptManagementTest extends TestCase
         $this->assertSame('-20.0000', InventoryCostEntry::orderByDesc('id')->first()->purchase_price_variance);
     }
 
+    public function test_standard_cost_variance_includes_capitalizable_tax_and_excludes_recoverable_effect(): void
+    {
+        $this->method('standard');
+        $revision = $this->standard('400.000000');
+        $discount = Discount::factory()->create([
+            'type' => 'percentage', 'usage' => 'purchases', 'value' => '10.0000',
+        ]);
+        $tax = Tax::factory()->create([
+            'type' => 'percentage', 'usage' => 'purchases', 'rate' => '5.0000',
+            'price_inclusion' => 'excluded', 'purchase_treatment' => 'capitalizable',
+        ]);
+        $this->variant->product->discounts()->attach($discount);
+        $this->variant->product->taxes()->attach($tax);
+
+        $order = $this->order('10', '500', [
+            'items' => [[
+                'variant_id' => $this->variant->id,
+                'quantity' => '10',
+                'unit_price' => '500',
+                'discount_id' => $discount->id,
+                'tax_ids' => [$tax->id],
+            ]],
+        ]);
+        $snapshot = $order->items->first()->commercial_snapshot;
+        $this->assertSame('4500.0000', $snapshot['taxable_amount']);
+        $this->assertSame('225.0000', $snapshot['capitalizable_tax_amount']);
+        $this->assertSame('4725.0000', $snapshot['inventory_acquisition_amount']);
+
+        $receipt = $this->postReceipt($this->save($this->draft($order), ['10']));
+        $entry = $receipt->items->first()->stockMovement->inventoryCostEntry;
+        $this->assertSame('4725.0000', $entry->purchase_value);
+        $this->assertSame('472.500000', $entry->purchase_unit_cost);
+        $this->assertSame('400.000000', $entry->unit_cost);
+        $this->assertSame('4000.0000', $entry->total_cost);
+        $this->assertSame('725.0000', $entry->purchase_price_variance);
+        $this->assertSame($revision->id, $entry->standard_cost_revision_id);
+        $this->assertSame('400.000000', $revision->standardCost->refresh()->standard_cost);
+        $this->assertSame('4000.0000', $this->state()->total_value);
+    }
+
     public static function standardHardeningReceipts(): array
     {
         return [
@@ -462,6 +536,7 @@ class PurchaseReceiptManagementTest extends TestCase
             throw new \RuntimeException('Injected failure after Standard Cost writes.');
         });
         $this->app->instance(ReceiptValuationService::class, $mock);
+        $this->app->forgetInstance(PurchaseReceiptService::class);
         $this->receipts = app(PurchaseReceiptService::class);
         $this->reject(fn () => $this->postReceipt($receipt), \RuntimeException::class);
         $this->assertSame($before, $this->hardeningSnapshot());
@@ -576,6 +651,7 @@ class PurchaseReceiptManagementTest extends TestCase
             throw new \RuntimeException('Injected failure after valuation writes.');
         });
         $this->app->instance(ReceiptValuationService::class, $mock);
+        $this->app->forgetInstance(PurchaseReceiptService::class);
         $this->receipts = app(PurchaseReceiptService::class);
         $this->reject(fn () => $this->postReceipt($receipt), \RuntimeException::class);
         foreach (['stock_movements', 'stock_balances', 'inventory_cost_entries', 'fifo_layers', 'inventory_cost_states'] as $table) {

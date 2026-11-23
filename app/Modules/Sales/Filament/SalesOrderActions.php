@@ -20,7 +20,6 @@ class SalesOrderActions
         $actions = [];
         foreach (['confirm' => 'Confirm Sales Order', 'cancel' => 'Cancel Sales Order'] as $operation => $label) {
             $actions[] = Action::make($operation)->label(__($label))->authorize($operation)->requiresConfirmation()
-                ->visible(fn (SalesOrder $record): bool => auth()->user()?->can($operation, $record) ?? false)
                 ->color($operation === 'confirm' ? 'success' : 'danger')
                 ->modalDescription(__($operation === 'confirm'
                     ? 'Confirm saved order values and reserve all quantities at this branch.'

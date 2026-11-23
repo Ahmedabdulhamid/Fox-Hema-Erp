@@ -27,7 +27,7 @@ class TreasuryAccountPolicy
 
     public function update(User $user, TreasuryAccount $account): bool
     {
-        return app(TreasuryWorkspace::class)->allows($user, $account->type === 'bank'
+        return app(TreasuryWorkspace::class)->allows($user, in_array($account->type, ['bank', 'provider_settlement'], true)
             ? TreasuryPermissions::MANAGE_BANKS : TreasuryPermissions::MANAGE_CASHBOXES, $account->location_id);
     }
 

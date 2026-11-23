@@ -2,11 +2,13 @@
 
 namespace App\Modules\Treasury\Services;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\Module;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\AuditLogger;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
+use App\Modules\POS\Models\PosSession;
 use App\Modules\Treasury\Models\TreasuryAccount;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -44,7 +46,7 @@ class TreasuryAccounts
                 ?? ['currency' => 'EGP', 'location_id' => null, 'is_active' => true, 'bank_name' => null, 'account_identifier' => null], $data);
             Validator::make($values, [
                 'name' => ['required', 'string', 'max:191'],
-                'type' => ['required', Rule::in(['branch_cashbox', 'central_cashbox', 'location_cashbox', 'bank'])],
+                'type' => ['required', Rule::in(['branch_cashbox', 'central_cashbox', 'location_cashbox', 'bank', 'provider_settlement'])],
                 'ownership' => ['required', Rule::in(['location', 'central'])],
                 'location_id' => ['nullable', 'integer'],
                 'currency' => ['required', Rule::in(['EGP'])], 'is_active' => ['required', 'boolean'],
@@ -54,12 +56,18 @@ class TreasuryAccounts
             $values['location_id'] = $locationId;
             if (($values['ownership'] === 'central') !== ($locationId === null)
                 || ($values['type'] === 'central_cashbox' && $values['ownership'] !== 'central')
-                || (in_array($values['type'], ['branch_cashbox', 'location_cashbox'], true) && $locationId === null)
+                || (in_array($values['type'], ['branch_cashbox', 'location_cashbox', 'provider_settlement'], true) && $locationId === null)
                 || ($values['type'] !== 'bank' && ($values['bank_name'] !== null || $values['account_identifier'] !== null))) {
                 throw ValidationException::withMessages(['ownership' => 'Select explicit central ownership or an active operational location; bank details belong only to bank accounts.']);
             }
-            $this->access->operation($actor, $values['type'] === 'bank'
+            $this->access->operation($actor, $values['type'] === 'bank' || $values['type'] === 'provider_settlement'
                 ? TreasuryPermissions::MANAGE_BANKS : TreasuryPermissions::MANAGE_CASHBOXES, $locationId);
+            if ($account !== null && ! $values['is_active'] && PosSession::query()
+                ->where('cash_treasury_account_id', $account->id)
+                ->whereIn('status', ['open', 'closing'])
+                ->lockForUpdate()->first() !== null) {
+                throw ValidationException::withMessages(['is_active' => __('pos.validation.drawer_has_active_shift')]);
+            }
             if ($locationId !== null) {
                 $location = Location::whereKey($locationId)->lockForUpdate()->firstOrFail();
                 if (! $location->is_active || ($values['type'] === 'branch_cashbox' && $location->type !== 'branch')) {
@@ -88,6 +96,9 @@ class TreasuryAccounts
 
     public function visible(User $actor): Collection
     {
-        return $this->access->scope(TreasuryAccount::query(), $actor)->orderBy('code')->get();
+        $query = $this->access->scope(TreasuryAccount::query(), $actor)->orderBy('code');
+
+        return RequestDisplayData::remember('treasury.visible-accounts:'.json_encode([$query->toSql(), $query->getBindings()], JSON_THROW_ON_ERROR),
+            fn (): Collection => $query->get());
     }
 }

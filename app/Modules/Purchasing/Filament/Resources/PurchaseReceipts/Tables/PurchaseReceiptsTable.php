@@ -2,10 +2,13 @@
 
 namespace App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\Tables;
 
+use App\Filament\ReadModelCache;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\PurchaseOrderResource;
 use App\Modules\Purchasing\Filament\Resources\PurchaseOrders\Tables\PurchaseOrdersTable;
 use App\Modules\Purchasing\Filament\Resources\PurchaseReceipts\PurchaseReceiptResource;
+use App\Modules\Purchasing\Models\PurchaseOrder;
 use App\Modules\Purchasing\Models\PurchaseReceipt;
+use App\Modules\Purchasing\Models\Supplier;
 use App\Modules\Purchasing\Services\PurchaseReceiptService;
 use App\Modules\Purchasing\Services\PurchasingAccess;
 use Filament\Actions\Action;
@@ -39,15 +42,16 @@ class PurchaseReceiptsTable
         ])->filters([
             SelectFilter::make('status')->label(__('Status'))->options(['draft' => __('Draft'), 'posted' => __('Posted'), 'cancelled' => __('Cancelled')]),
             SelectFilter::make('location_id')->label(__('Destination location'))->options(fn (): array => app(PurchasingAccess::class)->receiptLocations(auth()->user())->pluck('name', 'id')->all()),
-            SelectFilter::make('purchase_order_id')->label(__('PO number'))->searchable()->options(fn (): array => app(PurchasingAccess::class)
-                ->scopeReceipts(PurchaseReceipt::query(), auth()->user())->with('purchaseOrder')->get()->pluck('purchaseOrder.order_number', 'purchase_order_id')->all()),
+            SelectFilter::make('purchase_order_id')->label(__('PO number'))->searchable()->options(fn (): array => app(ReadModelCache::class)->options('purchasing', PurchaseOrder::query()->whereIn('id', app(PurchasingAccess::class)
+                ->scopeReceipts(PurchaseReceipt::query(), auth()->user())->select('purchase_order_id')), 'order_number')),
             SelectFilter::make('supplier_id')->label(__('Supplier'))->searchable()
-                ->options(fn (): array => app(PurchasingAccess::class)->scopeReceipts(PurchaseReceipt::query(), auth()->user())
-                    ->with('purchaseOrder.supplier')->get()->pluck('purchaseOrder.supplier.name', 'purchaseOrder.supplier_id')->all())
+                ->options(fn (): array => app(ReadModelCache::class)->options('purchasing', Supplier::query()->whereIn('id', PurchaseOrder::query()->select('supplier_id')->whereIn('id',
+                    app(PurchasingAccess::class)->scopeReceipts(PurchaseReceipt::query(), auth()->user())->select('purchase_order_id')))
+                ))
                 ->query(fn (Builder $query, array $data) => $query->when($data['value'] ?? null,
                     fn ($query, $id) => $query->whereHas('purchaseOrder', fn ($query) => $query->where('supplier_id', $id)))),
             PurchaseOrdersTable::dates('received_at')->label(__('Received dates')),
-        ])->recordActions([ViewAction::make(), EditAction::make(), ...self::actions()])
+        ])->recordAction(null)->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items'))->recordActions([ViewAction::make(), EditAction::make(), ...self::actions()])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 

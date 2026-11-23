@@ -39,7 +39,7 @@ class VendorBillInfolist
                         if ($record->status !== 'posted') {
                             return __('Not posted');
                         }
-                        $amounts = app(SupplierFinancialBalances::class)->bill(auth()->user(), $record);
+                        $amounts = app(SupplierFinancialBalances::class)->billForDisplay(auth()->user(), $record);
                         $status = BigDecimal::of($amounts['outstanding'])->isZero() ? 'Settled' : (BigDecimal::of($amounts['paid'])->isZero() ? 'Unpaid' : 'Partially paid');
 
                         return __($status).' | '.__('Paid').': '.MoneyFormatter::format($amounts['paid']).' | '.__('Outstanding').': '.MoneyFormatter::format($amounts['outstanding']);
@@ -57,7 +57,7 @@ class VendorBillInfolist
                             TextEntry::make('unit_price')->formatStateUsing(fn ($state) => MoneyFormatter::precise($state)),
                             TextEntry::make('line_total')->formatStateUsing(fn ($state) => MoneyFormatter::format($state)),
                             MasterDetail::entry(function ($record): array {
-                                $record->loadMissing(['receiptMatches.purchaseReceiptItem.purchaseReceipt', 'receiptMatches.purchaseReceiptItem.purchaseOrderItem', 'receiptMatches.vendorBillItem']);
+                                $record->loadMissing(['receiptMatches.purchaseReceiptItem.purchaseReceipt', 'receiptMatches.purchaseReceiptItem.purchaseOrderItem']);
 
                                 return self::lineDetails();
                             }),
@@ -90,7 +90,7 @@ class VendorBillInfolist
                     TextEntry::make('purchaseReceiptItem.unit_cost')->label(__('Receipt purchase cost')),
                     TextEntry::make('purchaseReceiptItem.purchaseOrderItem.unit_price')->label(__('PO unit price')),
                     TextEntry::make('price_difference')->label(__('Price difference requires review'))->state(fn ($record): string => (string) BigDecimal::of($record->vendorBillItem->unit_price)->minus($record->purchaseReceiptItem->unit_cost))
-                        ->color(fn ($record): string => BigDecimal::of($record->vendorBillItem->unit_price)->isEqualTo($record->purchaseReceiptItem->unit_cost) ? 'gray' : 'warning'),
+                        ->color(fn ($state): string => BigDecimal::of($state)->isZero() ? 'gray' : 'warning'),
                 ]),
             ]),
         ];

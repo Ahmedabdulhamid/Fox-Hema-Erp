@@ -4,6 +4,7 @@ namespace App\Modules\POS\Models;
 
 use App\Models\Concerns\HasPublicUuid;
 use App\Modules\AccessManagement\Models\User;
+use App\Modules\Payments\Models\PaymentMethod;
 use App\Modules\POS\Database\Factories\PosSessionTenderFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -18,6 +19,7 @@ class PosSessionTender extends Model
 
     protected $fillable = [
         'pos_session_id',
+        'payment_method_id',
         'method',
         'expected_amount',
         'verified_amount',
@@ -50,5 +52,10 @@ class PosSessionTender extends Model
     public function verifiedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'verified_by');
+    }
+
+    public function paymentMethod(): BelongsTo
+    {
+        return $this->belongsTo(PaymentMethod::class, 'payment_method_id');
     }
 }

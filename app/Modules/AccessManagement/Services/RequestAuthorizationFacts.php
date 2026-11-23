@@ -8,6 +8,8 @@ use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use LogicException;
 use WeakMap;
 
 class RequestAuthorizationFacts
@@ -17,12 +19,19 @@ class RequestAuthorizationFacts
     /** @var array<string, bool> */
     private array $facts = [];
 
+    /** @var array<string, bool> */
+    private array $schemaFacts = [];
+
     /** @var array<string, array<int, int|null>> */
     private array $readFacts = [];
 
     private readonly string $readScope;
 
     private int $readRevision = 0;
+
+    private int $readTransactionDepth = 0;
+
+    private bool $includesNestedTransactions = false;
 
     /** @var array{activeModules: array<string, bool>, permissionModules: array<string, list<string>>}|null */
     private ?array $moduleAccessFacts = null;
@@ -55,20 +64,100 @@ class RequestAuthorizationFacts
         $request->attributes->remove(self::ATTRIBUTE);
     }
 
+    /** Reuse read facts only during this operation; preserve an existing request's boundary and invalidation. */
+    public static function duringRead(Closure $operation): mixed
+    {
+        if (self::current() !== null || ! app()->bound('request')) {
+            return $operation();
+        }
+        $request = app('request');
+        self::begin($request);
+        try {
+            return $operation();
+        } finally {
+            self::end($request);
+        }
+    }
+
+    public static function duringReadTransaction(Closure $operation): mixed
+    {
+        $state = self::current();
+        if ($state === null) {
+            return $operation();
+        }
+
+        $state->readTransactionDepth++;
+        try {
+            return $operation();
+        } finally {
+            $state->readTransactionDepth--;
+        }
+    }
+
+    /** Reuse facts within a registry-locked transaction; every write and transaction event still invalidates them. */
+    public static function duringLockedTransaction(Closure $operation): mixed
+    {
+        $connection = DB::connection();
+        if ($connection->transactionLevel() < 1) {
+            throw new LogicException('A locked authorization scope requires an active database transaction.');
+        }
+        ModuleRegistryLock::acquire();
+        $request = request();
+        $previous = self::current();
+        $previous?->reset(schemaChanged: false);
+        $state = new self($connection, $connection->transactionLevel());
+        $state->schemaFacts = $previous?->schemaFacts ?? [];
+        $state->includesNestedTransactions = true;
+        $request->attributes->set(self::ATTRIBUTE, $state);
+        try {
+            return $operation();
+        } finally {
+            $state->reset(schemaChanged: false);
+            if ($previous !== null) {
+                $previous->reset(schemaChanged: false);
+                $previous->schemaFacts = $state->schemaFacts;
+                $request->attributes->set(self::ATTRIBUTE, $previous);
+            } else {
+                $request->attributes->remove(self::ATTRIBUTE);
+            }
+        }
+    }
+
+    public static function isDuringReadTransaction(): bool
+    {
+        return (self::current()?->readTransactionDepth ?? 0) > 0;
+    }
+
+    public static function holdsRegistryLock(): bool
+    {
+        return self::scoped()?->includesNestedTransactions ?? false;
+    }
+
     /** Cache facts only, never a policy/Gate decision or a record's ownership/lifecycle eligibility. */
-    public static function remember(string $key, Closure $resolve): bool
+    public static function remember(string $key, Closure $resolve, bool $teamScoped = true): bool
     {
         $state = self::scoped();
         if ($state === null) {
             return $resolve();
         }
         $connection = DB::connection();
-        $key = json_encode([$connection->getDatabaseName(), spl_object_id($connection->getPdo()), getPermissionsTeamId(), $key], JSON_THROW_ON_ERROR);
+        $key = json_encode([$connection->getDatabaseName(), spl_object_id($connection->getPdo()), $teamScoped ? getPermissionsTeamId() : null, $key], JSON_THROW_ON_ERROR);
         if (! array_key_exists($key, $state->facts)) {
             $state->facts[$key] = $resolve();
         }
 
         return $state->facts[$key];
+    }
+
+    /** Schema metadata is request-local and discarded after DDL or a rollback. */
+    public static function tableExists(string $table): bool
+    {
+        return self::rememberSchema('table:'.$table, fn (): bool => Schema::hasTable($table));
+    }
+
+    public static function columnExists(string $table, string $column): bool
+    {
+        return self::rememberSchema('column:'.$table.':'.$column, fn (): bool => Schema::hasColumn($table, $column));
     }
 
     /**
@@ -126,11 +215,11 @@ class RequestAuthorizationFacts
         return $state->readFacts[$key] ?? null;
     }
 
-    public static function forget(): void
+    public static function forget(bool $schemaChanged = true): void
     {
         $state = self::current();
         if ($state !== null) {
-            $state->reset();
+            $state->reset($schemaChanged);
         }
     }
 
@@ -139,13 +228,13 @@ class RequestAuthorizationFacts
         self::trackActor($actor);
 
         return self::remember('active-actor:'.json_encode([$actor->getMorphClass(), $actor->getKey()], JSON_THROW_ON_ERROR),
-            fn (): bool => User::query()->whereKey($actor->id)->where('is_active', true)->exists());
+            fn (): bool => User::query()->whereKey($actor->id)->where('is_active', true)->exists(), teamScoped: false);
     }
 
     public static function locationIsActive(int $locationId): bool
     {
         return self::remember('active-location:'.$locationId,
-            fn (): bool => Location::whereKey($locationId)->where('is_active', true)->exists());
+            fn (): bool => Location::whereKey($locationId)->where('is_active', true)->exists(), teamScoped: false);
     }
 
     public static function actorHasLocation(User $actor, int $locationId): bool
@@ -153,7 +242,7 @@ class RequestAuthorizationFacts
         self::trackActor($actor);
 
         return self::remember('actor-location:'.json_encode([$actor->getMorphClass(), $actor->getKey(), $locationId], JSON_THROW_ON_ERROR),
-            fn (): bool => $actor->locations()->whereKey($locationId)->exists());
+            fn (): bool => $actor->locations()->whereKey($locationId)->exists(), teamScoped: false);
     }
 
     /** Reuse fresh Spatie relations only within the same request, connection, team, and transaction boundary. */
@@ -179,9 +268,12 @@ class RequestAuthorizationFacts
         }
     }
 
-    private function reset(): void
+    private function reset(bool $schemaChanged = true): void
     {
         $this->facts = [];
+        if ($schemaChanged) {
+            $this->schemaFacts = [];
+        }
         $this->readFacts = [];
         $this->readRevision++;
         $this->moduleAccessFacts = null;
@@ -191,11 +283,25 @@ class RequestAuthorizationFacts
         }
     }
 
+    private static function rememberSchema(string $key, Closure $resolve): bool
+    {
+        $state = self::current();
+        $connection = DB::connection();
+        if ($state === null || $state->connection !== $connection) {
+            return $resolve();
+        }
+        $key = json_encode([$connection->getDatabaseName(), spl_object_id($connection->getPdo()), $key], JSON_THROW_ON_ERROR);
+
+        return $state->schemaFacts[$key] ??= $resolve();
+    }
+
     private static function scoped(): ?self
     {
         $state = self::current();
         $connection = DB::connection();
-        if ($state === null || $state->connection !== $connection || $state->transactionLevel !== $connection->transactionLevel()) {
+        if ($state === null || $state->connection !== $connection
+            || ($state->transactionLevel !== $connection->transactionLevel()
+                && (! $state->includesNestedTransactions || $connection->transactionLevel() < $state->transactionLevel))) {
             return null;
         }
 

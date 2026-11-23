@@ -34,7 +34,6 @@ class SalesReturnActions
     private static function mutation(string $operation): Action
     {
         return Action::make($operation)->label(__('returns.'.$operation))->authorize($operation)
-            ->visible(fn (SalesReturn $record): bool => auth()->user()?->can($operation, $record) ?? false)
             ->requiresConfirmation()->color($operation === 'approve' ? 'success' : 'danger')
             ->modalDescription(__('returns.'.$operation.'_confirm'))
             ->schema([

@@ -12,6 +12,7 @@ use App\Modules\AccessManagement\Services\LocationContext;
 use App\Modules\Inventory\Data\StockPostingCommand;
 use App\Modules\Inventory\Enums\StockMovementType;
 use App\Modules\Inventory\Filament\Resources\QuarantineReceipts\Pages\ListQuarantineReceipts;
+use App\Modules\Inventory\Filament\Resources\QuarantineReceipts\QuarantineReceiptResource;
 use App\Modules\Inventory\Models\QuarantineReceipt;
 use App\Modules\Inventory\Models\StockBalance;
 use App\Modules\Inventory\Services\InventoryPermissions;
@@ -49,6 +50,7 @@ use App\Modules\Sales\Services\SalesReturnPostingService;
 use App\Modules\Sales\Services\SalesReturnService;
 use Brick\Math\BigDecimal;
 use Filament\Facades\Filament;
+use Filament\Navigation\NavigationManager;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
@@ -558,6 +560,19 @@ class SalesReturnPostingTest extends TestCase
         $return = $this->postReturn($this->approvedReturn($this->postDelivery($this->delivery($this->order())), '2', 'damaged'));
         $receipt = QuarantineReceipt::firstOrFail();
         $actor = $this->manager();
+        $groupKey = 'product-group-quarantine-'.$this->variant->product_id.'-'.$this->branch->id;
+        $page = Livewire::test(ListQuarantineReceipts::class)->assertSuccessful()->assertSet('stockView', 'products')
+            ->assertSeeHtml('wire:key="'.$groupKey.'"')->assertSee($this->variant->product->name)
+            ->assertSee(__('Quarantined; unavailable for allocation'))->assertDontSee(__('Allocate Now'))
+            ->assertTableColumnFormattedStateSet('current_inspection_status', __('returns.pending_inspection'), $receipt);
+        $groups = $page->instance()->productGroups();
+        $this->assertSame(1, $groups->total());
+        $this->assertSame($this->variant->product_id, (int) $groups->first()->product_id);
+        $this->assertSame($this->branch->id, (int) $groups->first()->location_id);
+        $this->assertSame(1, (int) $groups->first()->variants);
+        $this->assertSame('2.0000', (string) BigDecimal::of($groups->first()->quantity_on_hand)->toScale(4));
+        $this->assertSame('0.0000', (string) BigDecimal::of($groups->first()->unallocated_quantity_on_hand)->toScale(4));
+        $this->assertSame(['2', '2', '0', '1'], array_column($page->instance()->inventoryOverview()['cards'], 'value'));
         $before = $this->snapshot();
         $submission = (string) Str::uuid7();
         $service = app(QuarantineInspectionService::class);
@@ -573,7 +588,40 @@ class SalesReturnPostingTest extends TestCase
         $this->assertSame('0.0000', $balance['sellable_quantity']);
         $this->reject(fn () => $inspection->forceFill(['observations' => 'destroyed'])->saveQuietly());
         $this->postReturn($return);
-        Livewire::test(ListQuarantineReceipts::class)->assertCanSeeTableRecords([$receipt]);
+        $service->record($actor, $receipt, 'Second observation without stock release', (string) Str::uuid7());
+        $page = Livewire::test(ListQuarantineReceipts::class)->assertSet('stockView', 'products')
+            ->assertSeeHtml('wire:key="'.$groupKey.'"')
+            ->assertTableColumnFormattedStateSet('current_inspection_status', __('returns.awaiting_disposition_decision'), $receipt);
+        $this->assertSame(['2', '0', '2', '1'], array_column($page->instance()->inventoryOverview()['cards'], 'value'));
+        $this->assertSame(1, $page->instance()->productGroups()->total());
+        $this->assertSame('2.0000', (string) BigDecimal::of($page->instance()->productGroups()->first()->quantity_on_hand)->toScale(4));
+        $page->filterTable('inspection_status', 'pending_inspection')->assertDontSeeHtml('wire:key="'.$groupKey.'"');
+        $this->assertSame(0, $page->instance()->productGroups()->total());
+        $page->filterTable('inspection_status', 'awaiting_disposition_decision')->assertSeeHtml('wire:key="'.$groupKey.'"');
+        $this->assertSame(1, $page->instance()->productGroups()->total());
+        $page->call('showProductRecords', $this->variant->product_id, $this->branch->id)
+            ->assertSet('stockView', 'records')->assertSet('tableFilters.product.value', $this->variant->product_id)
+            ->assertSet('tableFilters.location_id.value', $this->branch->id)->assertCountTableRecords(1)
+            ->assertCanSeeTableRecords([$receipt])
+            ->assertTableColumnFormattedStateSet('current_inspection_status', __('returns.awaiting_disposition_decision'), $receipt)
+            ->assertTableColumnStateSet('inspections_count', 2, $receipt)
+            ->assertTableActionDoesNotExist('release')->assertTableActionDoesNotExist('delete');
+        $page->filterTable('inspection_status', 'pending_inspection')->assertCountTableRecords(0)->assertCanNotSeeTableRecords([$receipt])
+            ->filterTable('inspection_status', 'awaiting_disposition_decision')->assertCountTableRecords(1)->assertCanSeeTableRecords([$receipt]);
+        $this->assertSame($before, $this->snapshot());
+        if (getenv('INVENTORY_CAPTURE_PREVIEWS') === '1') {
+            foreach (['en', 'ar'] as $locale) {
+                Livewire::flushState();
+                app()->forgetInstance(NavigationManager::class);
+                $response = $this->withSession(['locale' => $locale])->get(QuarantineReceiptResource::getUrl());
+                $response->assertOk();
+                $directory = storage_path('app/private/inventory-previews');
+                if (! is_dir($directory)) {
+                    mkdir($directory, 0700, true);
+                }
+                file_put_contents($directory.'/quarantine-'.$locale.'.html', $response->getContent());
+            }
+        }
     }
 
     public function test_posted_evidence_and_exact_fifo_layers_reject_normal_quiet_and_bulk_mutations(): void

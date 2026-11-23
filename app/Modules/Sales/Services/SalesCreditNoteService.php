@@ -2,11 +2,15 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Filament\ReadModelCache;
+use App\Filament\RequestDisplayData;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\AuditLogger;
 use App\Modules\AccessManagement\Services\DocumentNumberService;
 use App\Modules\AccessManagement\Services\ModuleRegistryLock;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
+use App\Modules\Reporting\Services\ProfitabilityInvalidation;
+use App\Modules\Reporting\Services\SalesProjection;
 use App\Modules\Sales\Models\SalesCreditNote;
 use App\Modules\Sales\Models\SalesInvoice;
 use App\Modules\Sales\Models\SalesInvoiceItem;
@@ -121,6 +125,8 @@ class SalesCreditNoteService
             $note->refresh();
             DB::table('sales_credit_notes')->where('id', $note->id)->update(['posting_payload_hash' => $this->revision($note)]);
             $this->audit($actor, $note->refresh(), 'posted');
+            app(ProfitabilityInvalidation::class)->posted('sales_credit_notes', (int) $note->id);
+            app(SalesProjection::class)->request((int) $note->location_id, $note->credit_date->toDateString());
 
             return $note;
         }, DB::transactionLevel() === 0 ? 3 : 1);
@@ -172,29 +178,48 @@ class SalesCreditNoteService
 
     public function details(?User $actor, mixed $returnId, mixed $invoiceId = null): array
     {
-        if (! is_scalar($returnId) || ! ctype_digit((string) $returnId) || ! $this->returns($actor)->whereKey($returnId)->exists()) {
+        $query = $this->returns($actor);
+
+        return RequestDisplayData::remember('sales-credit-details:'.json_encode([$actor?->id, $returnId, $invoiceId], JSON_THROW_ON_ERROR),
+            fn (): array => $this->readDetails($query, $returnId, $invoiceId));
+    }
+
+    private function readDetails(Builder $query, mixed $returnId, mixed $invoiceId): array
+    {
+        if (! is_scalar($returnId) || ! ctype_digit((string) $returnId) || ! $query->whereKey($returnId)->exists()) {
             return [];
         }
 
-        return DB::table('sales_return_posted_allocations as a')->join('sales_invoice_items as i', 'i.id', '=', 'a.sales_invoice_item_id')
+        $rows = DB::table('sales_return_posted_allocations as a')->join('sales_invoice_items as i', 'i.id', '=', 'a.sales_invoice_item_id')
             ->join('sales_invoices as v', 'v.id', '=', 'a.sales_invoice_id')->join('sales_returns as r', 'r.id', '=', 'a.sales_return_id')
             ->whereColumn('v.location_id', 'r.location_id')->whereColumn('v.sales_order_id', 'r.sales_order_id')->where('a.sales_return_id', $returnId)->where('v.status', 'posted')
             ->when($invoiceId !== null, fn ($q) => $q->where('v.id', $invoiceId))
             ->leftJoin('product_variants as pv', 'pv.id', '=', 'i.variant_id')->leftJoin('products as p', 'p.id', '=', 'pv.product_id')
             ->select('pv.product_id', 'p.brand_id', 'a.id', 'a.quantity', 'a.sales_invoice_id', 'v.invoice_number', 'i.description', 'i.id as invoice_item_id', 'i.quantity as invoice_quantity', 'i.unit_price', 'i.subtotal', 'i.discount_amount', 'i.tax_amount', 'i.line_total')
-            ->orderBy('a.id')->get()->mapWithKeys(function ($row): array {
-                $used = DB::table('sales_credit_note_items as i')->join('sales_credit_notes as n', 'n.id', '=', 'i.sales_credit_note_id')
-                    ->where('n.status', 'posted')->where('i.sales_return_posted_allocation_id', $row->id)->sum('i.quantity');
-                $remaining = BigDecimal::of($row->quantity)->minus($used)->toScale(4);
-                if ($remaining->isNegative()) {
-                    $this->invalid('inconsistent');
-                }
-                $invoicedUsed = DB::table('sales_credit_note_items as i')->join('sales_credit_notes as n', 'n.id', '=', 'i.sales_credit_note_id')
-                    ->where('n.status', 'posted')->where('i.sales_invoice_item_id', $row->invoice_item_id)->sum('i.quantity');
-                $amounts = $remaining->isZero() ? ['line_total' => '0.0000'] : $this->calculator->allocate(array_replace((array) $row, ['quantity' => $row->invoice_quantity]), (string) $invoicedUsed, (string) $remaining);
+            ->orderBy('a.id')->get();
+        if ($rows->isEmpty()) {
+            return [];
+        }
+        $postedItems = DB::table('sales_credit_note_items as i')->join('sales_credit_notes as n', 'n.id', '=', 'i.sales_credit_note_id')
+            ->where('n.status', 'posted');
+        $usedByAllocation = (clone $postedItems)->whereIn('i.sales_return_posted_allocation_id', $rows->pluck('id'))
+            ->selectRaw('i.sales_return_posted_allocation_id, SUM(i.quantity) as used_quantity')
+            ->groupBy('i.sales_return_posted_allocation_id')->pluck('used_quantity', 'sales_return_posted_allocation_id');
+        $usedByInvoiceItem = (clone $postedItems)->whereIn('i.sales_invoice_item_id', $rows->pluck('invoice_item_id')->unique())
+            ->selectRaw('i.sales_invoice_item_id, SUM(i.quantity) as used_quantity')
+            ->groupBy('i.sales_invoice_item_id')->pluck('used_quantity', 'sales_invoice_item_id');
 
-                return [$row->id => (array) $row + ['remaining' => (string) $remaining, 'remaining_amount' => $amounts['line_total']]];
-            })->all();
+        return $rows->mapWithKeys(function ($row) use ($usedByAllocation, $usedByInvoiceItem): array {
+            $used = $usedByAllocation->get($row->id, '0');
+            $remaining = BigDecimal::of($row->quantity)->minus($used)->toScale(4);
+            if ($remaining->isNegative()) {
+                $this->invalid('inconsistent');
+            }
+            $invoicedUsed = $usedByInvoiceItem->get($row->invoice_item_id, '0');
+            $amounts = $remaining->isZero() ? ['line_total' => '0.0000'] : $this->calculator->allocate(array_replace((array) $row, ['quantity' => $row->invoice_quantity]), (string) $invoicedUsed, (string) $remaining);
+
+            return [$row->id => (array) $row + ['remaining' => (string) $remaining, 'remaining_amount' => $amounts['line_total']]];
+        })->all();
     }
 
     private function lockSources(User $actor, int $returnId, int $invoiceId, string $permission): SalesReturn
@@ -242,17 +267,22 @@ class SalesCreditNoteService
             $this->invalid('ineligible');
         }
         usort($input, fn ($a, $b) => $a['sales_return_posted_allocation_id'] <=> $b['sales_return_posted_allocation_id']);
+        $allocations = $return->postedAllocations()->whereKey(array_column($input, 'sales_return_posted_allocation_id'))
+            ->where('sales_invoice_id', $invoiceId)->orderBy('id')->get()->keyBy('id');
+        $sources = SalesInvoiceItem::whereKey($allocations->pluck('sales_invoice_item_id'))->orderBy('id')->get()->keyBy('id');
+        $histories = DB::table('sales_credit_note_items as i')->join('sales_credit_notes as n', 'n.id', '=', 'i.sales_credit_note_id')
+            ->where('n.status', 'posted')->whereIn('i.sales_invoice_item_id', $sources->modelKeys())
+            ->select('i.*')->orderBy('i.id')->get()->groupBy('sales_invoice_item_id');
         $running = [];
         $lines = [];
         foreach ($input as $request) {
-            $allocation = $return->postedAllocations()->whereKey($request['sales_return_posted_allocation_id'])->where('sales_invoice_id', $invoiceId)->first();
+            $allocation = $allocations->get($request['sales_return_posted_allocation_id']);
             if ($allocation === null || $allocation->sales_invoice_item_id === null) {
                 $this->invalid('ineligible');
             }
-            $source = SalesInvoiceItem::findOrFail($allocation->sales_invoice_item_id);
+            $source = $sources->findOrFail($allocation->sales_invoice_item_id);
             $quantity = $this->decimals->decimal($request['quantity'], 'quantity', 18, 4);
-            $history = DB::table('sales_credit_note_items as i')->join('sales_credit_notes as n', 'n.id', '=', 'i.sales_credit_note_id')
-                ->where('n.status', 'posted')->where('i.sales_invoice_item_id', $source->id)->select('i.*')->orderBy('i.id')->get();
+            $history = $histories->get($source->id, collect());
             $usedAllocation = $history->where('sales_return_posted_allocation_id', $allocation->id)->reduce(fn ($sum, $row) => $sum->plus($row->quantity), BigDecimal::zero());
             if (! BigDecimal::of($quantity)->isPositive() || $usedAllocation->plus($quantity)->isGreaterThan($allocation->quantity)) {
                 $this->invalid('ineligible');
@@ -329,6 +359,7 @@ class SalesCreditNoteService
 
     private function audit(User $actor, SalesCreditNote $note, string $event): void
     {
+        app(ReadModelCache::class)->invalidateAfterCommit('sales', $note->getConnection());
         app(AuditLogger::class)->record('sales_credit_note_'.$event, actor: $actor, metadata: [
             'sales_credit_note_uuid' => $note->uuid, 'sales_return_id' => $note->sales_return_id, 'sales_invoice_id' => $note->sales_invoice_id,
             'location_id' => $note->location_id, 'total_amount' => $note->total_amount, 'status' => $note->status]);

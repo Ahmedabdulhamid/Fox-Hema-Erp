@@ -21,12 +21,14 @@ use App\Modules\AccessManagement\Policies\PermissionPolicy;
 use App\Modules\AccessManagement\Policies\RolePolicy;
 use App\Modules\AccessManagement\Policies\UserPolicy;
 use App\Modules\AccessManagement\Services\AuditLogger;
+use App\Modules\AccessManagement\Services\BranchDatabaseSessionHandler;
 use App\Modules\AccessManagement\Services\ModuleAccess;
 use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
 use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
@@ -34,6 +36,7 @@ use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Session;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
 
@@ -48,13 +51,31 @@ class AccessManagementServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Session::extend('database', fn (Application $app): BranchDatabaseSessionHandler => new BranchDatabaseSessionHandler(
+            $app->make('db')->connection(config('session.connection')),
+            config('session.table', 'sessions'), (int) config('session.lifetime'), $app,
+        ));
+
         DB::listen(static function (QueryExecuted $query): void {
-            if (! preg_match('/^\s*(SELECT|SHOW|EXPLAIN|DESCRIBE|DESC|PRAGMA)\b/i', $query->sql)) {
-                RequestAuthorizationFacts::forget();
+            if (preg_match('/^\s*(SELECT|SHOW|EXPLAIN|DESCRIBE|DESC|PRAGMA)\b/i', $query->sql)) {
+                return;
             }
+
+            $infrastructureTables = array_map(fn (string $table): string => preg_quote($table, '~'), [
+                (string) config('session.table', 'sessions'),
+                (string) config('cache.stores.database.table', 'cache'),
+                (string) (config('cache.stores.database.lock_table') ?: 'cache_locks'),
+            ]);
+            if (preg_match('~^\s*(?:UPDATE|INSERT(?:\s+IGNORE)?\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\s+[`"]?(?:'.implode('|', $infrastructureTables).')[`"]?(?:\s|$)~i', $query->sql)) {
+                return;
+            }
+
+            RequestAuthorizationFacts::forget(schemaChanged: ! preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i', $query->sql));
         });
-        Event::listen([TransactionBeginning::class, TransactionCommitted::class, TransactionRolledBack::class], static function (): void {
-            RequestAuthorizationFacts::forget();
+        Event::listen([TransactionBeginning::class, TransactionCommitted::class, TransactionRolledBack::class], static function (object $event): void {
+            if (! RequestAuthorizationFacts::isDuringReadTransaction()) {
+                RequestAuthorizationFacts::forget(schemaChanged: $event instanceof TransactionRolledBack);
+            }
         });
         $this->commands([ProvisionSuperAdmin::class]);
         Gate::policy(Module::class, ModulePolicy::class);

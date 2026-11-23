@@ -11,29 +11,15 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Support\Str;
 
 class Category extends Model
 {
+    /** @use HasFactory<CategoryFactory> */
+    use HasFactory;
+
     use HasPublicSlug, HasPublicUuid {
         HasPublicSlug::getRouteKeyName insteadof HasPublicUuid;
     }
-
-    protected static function booted(): void
-    {
-        static::creating(function (Category $category): void {
-            if (filled($category->code)) {
-                return;
-            }
-            do {
-                $code = 'CAT-'.Str::upper((string) Str::ulid());
-            } while (static::query()->where('code', $code)->exists());
-            $category->code = $code;
-        });
-    }
-
-    /** @use HasFactory<CategoryFactory> */
-    use HasFactory;
 
     protected static function newFactory(): CategoryFactory
     {

@@ -5,6 +5,7 @@ namespace App\Modules\AccessManagement\Filament\Resources\SecurityEvents;
 use App\Modules\AccessManagement\Filament\Resources\SecurityEvents\Pages\ListAuthEvents;
 use App\Modules\AccessManagement\Filament\Resources\SecurityEvents\Pages\ViewAuthEvent;
 use App\Modules\AccessManagement\Models\AuthEvent;
+use App\Modules\AccessManagement\Services\LocationContext;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\KeyValueEntry;
 use Filament\Infolists\Components\TextEntry;
@@ -95,7 +96,7 @@ class AuthEventResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table->columns([TextColumn::make('occurred_at')->label(__('Occurred at'))->dateTime()->sortable(), TextColumn::make('event')->label(__('Event'))->formatStateUsing(fn (string $state): string => __(Str::headline($state)))->badge()->searchable(), TextColumn::make('actor.name')->label(__('Performed by'))->placeholder(__('System')), TextColumn::make('target.name')->label(__('Affected user'))->placeholder(__('Unknown')), TextColumn::make('location.name')->label(__('Location'))->placeholder(__('Global')), TextColumn::make('ip_address')->label(__('IP address'))])->filters([SelectFilter::make('event')->label(__('Event'))->options(fn () => AuthEvent::query()->distinct()->orderBy('event')->pluck('event', 'event')->map(fn (string $event): string => __(Str::headline($event)))->all()), SelectFilter::make('location_id')->label(__('Location'))->relationship('location', 'name')])->recordActions([ViewAction::make()])->defaultSort('occurred_at', 'desc');
+        return $table->columns([TextColumn::make('occurred_at')->label(__('Occurred at'))->dateTime()->sortable(), TextColumn::make('event')->label(__('Event'))->formatStateUsing(fn (string $state): string => __(Str::headline($state)))->badge()->searchable(), TextColumn::make('actor.name')->label(__('Performed by'))->placeholder(__('System')), TextColumn::make('target.name')->label(__('Affected user'))->placeholder(__('Unknown')), TextColumn::make('location.name')->label(__('Location'))->placeholder(__('Global')), TextColumn::make('ip_address')->label(__('IP address'))])->filters([SelectFilter::make('event')->label(__('Event'))->options(fn () => AuthEvent::query()->distinct()->orderBy('event')->pluck('event', 'event')->map(fn (string $event): string => __(Str::headline($event)))->all()), SelectFilter::make('location_id')->label(__('Location'))->relationship('location', 'name', fn (Builder $query): Builder => app(LocationContext::class)->scopeLocationQuery($query, auth()->user(), 'auth_events.view'))])->recordActions([ViewAction::make()])->defaultSort('occurred_at', 'desc');
     }
 
     public static function getEloquentQuery(): Builder

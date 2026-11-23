@@ -40,8 +40,9 @@ class SalesInvoicesTable
             ])->query(fn (Builder $query, array $data): Builder => $query
                 ->when($data['from'] ?? null, fn ($query, $date) => $query->whereDate('invoice_date', '>=', $date))
                 ->when($data['until'] ?? null, fn ($query, $date) => $query->whereDate('invoice_date', '<=', $date))),
-        ])->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
-            SalesInvoiceActions::download('ar'), SalesInvoiceActions::download('en')])
+        ])->recordAction(null)->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items'))
+            ->recordActions([ViewAction::make(), EditAction::make(), SalesInvoiceActions::post(), SalesInvoiceActions::cancel(),
+                SalesInvoiceActions::download('ar'), SalesInvoiceActions::download('en')])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 }

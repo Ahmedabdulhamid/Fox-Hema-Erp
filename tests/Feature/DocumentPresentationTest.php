@@ -11,6 +11,7 @@ use App\Modules\AccessManagement\Services\DocumentPresentation;
 use App\Modules\AccessManagement\Services\DocumentSelectors;
 use App\Modules\AccessManagement\Services\LocationContext;
 use App\Modules\Purchasing\Filament\Resources\VendorBills\Pages\ViewVendorBill;
+use App\Modules\Purchasing\Services\PurchasingPermissions;
 use App\Modules\Purchasing\Services\VendorBillService;
 use App\Modules\Sales\Filament\Resources\SalesInvoices\Pages\CreateSalesInvoice;
 use App\Modules\Sales\Filament\Resources\SalesOrders\Pages\ViewSalesOrder;
@@ -226,6 +227,30 @@ class DocumentPresentationTest extends TestCase
         $this->assertStringContainsString($delivery->delivery_number, $links[0]['label']);
         $viewer = $this->scopedDocumentUser($this->documentBranch, [SalesPermissions::VIEW]);
         $this->assertSame([], app(DocumentPresentation::class)->links($order, $viewer));
+    }
+
+    public function test_purchase_navigation_reuses_loaded_receipts_and_still_checks_target_permissions(): void
+    {
+        $order = $this->documentPurchase();
+        $presentation = app(DocumentPresentation::class);
+        $expected = $presentation->links($order, $this->documentActor);
+        $order->load(['receipts', 'vendorBills']);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $this->assertSame($expected, $presentation->links($order, $this->documentActor));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertNotEmpty($expected);
+        $this->assertSame([], array_values(array_filter($queries,
+            fn (array $query): bool => str_starts_with($query['query'], 'select * from `purchase_receipts`')
+                || str_starts_with($query['query'], 'select * from `vendor_bills`'))));
+        $viewer = $this->scopedDocumentUser($this->documentBranch, [PurchasingPermissions::VIEW]);
+        $this->assertSame([], $presentation->links($order, $viewer));
     }
 
     public function test_supplier_invoice_reference_is_preserved_with_separate_warehouse_owned_erp_number(): void

@@ -45,9 +45,11 @@ class SupplierFinance extends ViewRecord
     protected function getViewData(): array
     {
         try {
-            return ['finance' => app(SupplierFinancialOverview::class)->report(auth()->user(), (int) $this->record->id,
-                $this->locationId === null || $this->locationId === '' ? null : (int) $this->locationId,
-                $this->cutoff ?: null, $this->from ?: null, $this->getPage('statementPage')), 'financeError' => null];
+            $locationId = $this->locationId === null || $this->locationId === '' ? null : (int) $this->locationId;
+            $data = app(SupplierFinancialOverview::class)->reportForDisplay(auth()->user(), (int) $this->record->id,
+                $locationId, $this->cutoff ?: null, $this->from ?: null, $this->getPage('statementPage'), $this->record);
+
+            return ['finance' => $data, 'financeError' => null];
         } catch (ValidationException $exception) {
             return ['finance' => null, 'financeError' => $exception->validator?->errors()->first() ?? collect($exception->errors())->flatten()->first()];
         }

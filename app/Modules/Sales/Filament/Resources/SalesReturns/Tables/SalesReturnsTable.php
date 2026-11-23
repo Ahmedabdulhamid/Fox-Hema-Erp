@@ -3,7 +3,9 @@
 namespace App\Modules\Sales\Filament\Resources\SalesReturns\Tables;
 
 use App\Modules\AccessManagement\Models\Location;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Sales\Filament\SalesReturnActions;
+use App\Modules\Sales\Models\SalesReturn;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
@@ -33,7 +35,17 @@ class SalesReturnsTable
             Filter::make('return_date')->schema([DatePicker::make('from')->label(__('returns.from')), DatePicker::make('until')->label(__('returns.until'))])
                 ->query(fn (Builder $query, array $data): Builder => $query->when($data['from'] ?? null, fn ($q, $date) => $q->whereDate('return_date', '>=', $date))
                     ->when($data['until'] ?? null, fn ($q, $date) => $q->whereDate('return_date', '<=', $date))),
-        ])->recordActions([ViewAction::make(), EditAction::make(), SalesReturnActions::approve(), SalesReturnActions::post(), SalesReturnActions::cancel()])
+        ])->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items')->withExists([
+            'creditNotes as has_credit_notes',
+            'items as has_credited_items' => fn (Builder $items): Builder => $items->whereHas('creditNoteItems'),
+        ])->afterQuery(function ($records): void {
+            foreach ($records as $record) {
+                if ($record instanceof SalesReturn) {
+                    RequestAuthorizationFacts::readFacts('sales-return-credit-history:'.$record->id,
+                        fn (): array => [(int) $record->has_credit_notes, (int) $record->has_credited_items]);
+                }
+            }
+        }))->recordAction(null)->recordActions([ViewAction::make(), EditAction::make(), SalesReturnActions::approve(), SalesReturnActions::post(), SalesReturnActions::cancel()])
             ->toolbarActions([])->defaultSort('id', 'desc')->paginationPageOptions([25, 50, 100]);
     }
 }

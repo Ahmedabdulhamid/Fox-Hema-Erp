@@ -28,6 +28,7 @@ use App\Modules\InventoryCosting\Models\InventoryStandardCostRevision;
 use App\Modules\InventoryCosting\Models\InventoryValuationSetting;
 use App\Modules\InventoryCosting\Services\SizeAllocationValuationService;
 use App\Modules\Products\Models\Category;
+use App\Modules\Products\Models\Color;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Products\Models\Size;
@@ -89,15 +90,17 @@ class SizeAllocationTest extends TestCase
         $this->allocations = app(SizeAllocationService::class);
     }
 
-    private function receive(string $quantity = '300', string $cost = '200', ?ProductVariant $variant = null): void
+    private function receive(string $quantity = '300', string $cost = '200', Product|ProductVariant|null $identity = null): ProductVariant
     {
-        $variant ??= $this->source;
+        $identity ??= $this->source;
+        $product = $identity instanceof Product ? $identity : $identity->product;
         $orders = app(PurchaseOrderService::class);
         $receipts = app(PurchaseReceiptService::class);
         $order = $orders->create($this->actor, ['supplier_id' => $this->supplier->id, 'location_id' => $this->location->id,
-            'order_date' => today()->toDateString(), 'items' => [['product_id' => $variant->product_id,
-                'receiving_mode' => $variant->isUnallocated() ? 'unknown' : 'known',
-                'variant_id' => $variant->id, 'quantity' => $quantity, 'unit_price' => $cost]]], (string) Str::uuid7());
+            'order_date' => today()->toDateString(), 'items' => [['product_id' => $product->id,
+                'receiving_mode' => $identity instanceof ProductVariant && ! $identity->isUnallocated() ? 'known' : 'unknown',
+                'variant_id' => $identity instanceof ProductVariant ? $identity->id : null,
+                'quantity' => $quantity, 'unit_price' => $cost]]], (string) Str::uuid7());
         $order = $orders->confirm($this->actor, $order, $orders->revision($order));
         $receipt = $order->receipts()->firstOrFail();
         $this->assertNull($receipt->posted_at);
@@ -105,6 +108,8 @@ class SizeAllocationTest extends TestCase
             'quantity' => $quantity, 'unit_cost' => $cost]]], $receipts->revision($receipt));
         $posted = $receipts->post($this->actor, $receipt, $receipts->revision($receipt));
         $receipts->post($this->actor, $posted, 'retry');
+
+        return $order->items()->firstOrFail()->variant;
     }
 
     private function data(string $quantity = '100', ?ProductVariant $target = null): array
@@ -168,6 +173,58 @@ class SizeAllocationTest extends TestCase
         $this->assertSame(0, SizeAllocation::count());
         $this->assertSame(0, StockBalance::where('variant_id', $this->target->id)->count());
         $this->assertSame($this->source->id, app(UnallocatedVariantService::class)->ensure($this->actor, $this->product)->id);
+    }
+
+    public function test_missing_color_size_variants_are_created_without_stock_then_receive_costed_allocation(): void
+    {
+        $product = Product::factory()->create([
+            'name' => 'Variantless seasonal product',
+            'category_id' => $this->product->category_id,
+            'status' => 'active',
+            'is_active' => false,
+        ]);
+        $this->assertSame(0, $product->variants()->count());
+        $source = $this->receive('12', '200', $product);
+        $this->assertSame(1, $product->variants()->count());
+
+        $blue = Color::factory()->create(['name' => 'Allocation blue', 'hex_code' => '#123ABC']);
+        $red = Color::factory()->create(['name' => 'Allocation red', 'hex_code' => '#AB3212']);
+        $size40 = Size::factory()->create(['name' => 'Allocation 40']);
+        $size41 = Size::factory()->create(['name' => 'Allocation 41']);
+        $submissionId = (string) Str::uuid7();
+        $data = [
+            'product_id' => $product->id,
+            'location_id' => $this->location->id,
+            'items' => [
+                ['size_id' => $size40->id, 'color_id' => $blue->id, 'quantity' => '5'],
+                ['size_id' => $size41->id, 'color_id' => $blue->id, 'quantity' => '3'],
+                ['size_id' => $size40->id, 'color_id' => $red->id, 'quantity' => '4'],
+            ],
+        ];
+
+        $this->reject(fn () => $this->allocations->create($this->actor, [
+            ...$data,
+            'items' => [['size_id' => $size40->id, 'color_id' => $blue->id, 'quantity' => '0']],
+        ], (string) Str::uuid7()));
+        $this->assertSame(1, $product->variants()->count());
+
+        $allocation = $this->allocations->create($this->actor, $data, $submissionId);
+        $retry = $this->allocations->create($this->actor, $data, $submissionId);
+        $targets = $allocation->items->map(fn ($item) => $item->variant)->keyBy(fn ($variant): string => $variant->size_id.':'.$variant->color_id);
+
+        $this->assertSame($allocation->id, $retry->id);
+        $this->assertSame(4, $product->variants()->count());
+        $this->assertCount(3, $allocation->items);
+        $this->assertSame(0, StockBalance::whereIn('variant_id', $targets->pluck('id'))->count());
+        $this->assertSame('12.0000', $this->state($source)->on_hand_qty);
+
+        $posted = $this->postAllocation($allocation);
+
+        $this->assertSame('0.0000', $this->state($source)->on_hand_qty);
+        $this->assertSame('0.0000', $this->state($source)->total_value);
+        $this->assertSame('12.0000', number_format((float) InventoryCostState::whereIn('variant_id', $targets->pluck('id'))->sum('on_hand_qty'), 4, '.', ''));
+        $this->assertSame('2400.0000', number_format((float) InventoryCostState::whereIn('variant_id', $targets->pluck('id'))->sum('total_value'), 4, '.', ''));
+        $this->assertSame(6, $posted->items->sum(fn ($item) => $item->movements()->count()));
     }
 
     public function test_full_allocation_preserves_quantity_value_and_reference_prices(): void
@@ -555,7 +612,8 @@ class SizeAllocationTest extends TestCase
         $this->receive();
         $draft = $this->draft();
         $namespace = 'App\\Modules\\Inventory\\Filament\\Resources\\SizeAllocations\\Pages\\';
-        Livewire::test($namespace.'ListSizeAllocations')->assertOk()->assertCanSeeTableRecords([$draft]);
+        Livewire::test($namespace.'ListSizeAllocations')->assertOk()->assertSet('workspaceTab', 'management')
+            ->call('switchWorkspace', 'history')->assertSet('workspaceTab', 'history')->assertCanSeeTableRecords([$draft]);
         Livewire::test($namespace.'CreateSizeAllocation')->assertOk();
         Livewire::test($namespace.'EditSizeAllocation', ['record' => $draft->uuid])->assertOk();
         Livewire::test($namespace.'ViewSizeAllocation', ['record' => $draft->uuid])

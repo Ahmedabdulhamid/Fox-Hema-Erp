@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Services;
 
+use App\Filament\ReadModelCache;
 use App\Modules\AccessManagement\Models\Location;
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
@@ -14,6 +15,7 @@ use App\Modules\InventoryCosting\Services\StockIssueValuationService;
 use App\Modules\Products\Models\Product;
 use App\Modules\Products\Models\ProductVariant;
 use App\Modules\Purchasing\Services\PurchaseOrderCalculator;
+use App\Modules\Reporting\Services\ProfitabilityInvalidation;
 use App\Modules\Sales\Models\SalesDelivery;
 use App\Modules\Sales\Models\SalesDeliveryItem;
 use App\Modules\Sales\Models\SalesOrder;
@@ -124,6 +126,8 @@ class SalesDeliveryPostingService
             }
             $this->assertFulfillment($order);
             DB::table('sales_deliveries')->where('id', $delivery->id)->update(['posting_evidence_hash' => $this->evidenceHash($delivery)]);
+            app(ReadModelCache::class)->invalidateAfterCommit('sales', $delivery->getConnection());
+            app(ProfitabilityInvalidation::class)->posted('sales_deliveries', (int) $delivery->id);
 
             return $delivery->refresh()->load(['items.stockMovement.inventoryCostEntry', 'items.reservationConsumption', 'postedBy']);
         }, 3);

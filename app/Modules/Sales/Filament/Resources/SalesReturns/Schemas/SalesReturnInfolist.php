@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesReturns\Schemas;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Products\Filament\MasterDetail;
@@ -41,7 +42,8 @@ class SalesReturnInfolist
         $lines[] = TextEntry::make('disposition')->label(__('returns.disposition'))->formatStateUsing(fn ($state) => __('returns.'.$state));
         foreach (['delivered', 'posted', 'claimed', 'remaining'] as $key) {
             $lines[] = TextEntry::make('summary_'.$key)->label(__('returns.'.($key === 'posted' ? 'previously_returned' : $key)))
-                ->state(fn (SalesReturnItem $record): string => app(SalesReturnQuantityService::class)->quantities([$record->sales_delivery_item_id], lock: false)[$record->sales_delivery_item_id][$key]);
+                ->state(fn (SalesReturnItem $record): string => RequestDisplayData::remember('return-line-quantities:'.$record->sales_delivery_item_id,
+                    fn (): array => app(SalesReturnQuantityService::class)->quantities([$record->sales_delivery_item_id], lock: false))[$record->sales_delivery_item_id][$key]);
         }
         $lines[] = RepeatableEntry::make('invoiceAllocations')->label(__('returns.invoice_allocations'))->columnSpanFull()->schema([
             TextEntry::make('salesInvoice.invoice_number')->label(__('returns.invoice')),
@@ -75,7 +77,7 @@ class SalesReturnInfolist
                         TextEntry::make('quantity')->label(__('returns.quantity')),
                         TextEntry::make('disposition')->label(__('returns.disposition'))->formatStateUsing(fn ($state) => __('returns.'.$state)),
                         MasterDetail::entry(function (SalesReturnItem $record) use ($lines): array {
-                            $record->loadMissing(['invoiceAllocations.salesInvoice', 'postedAllocations.salesInvoice', 'costAllocations.stockMovement', 'costAllocations.quarantineReceipt', 'costAllocations.scrapReceipt']);
+                            $record->loadMissing(['salesDeliveryItem.salesDelivery', 'invoiceAllocations.salesInvoice', 'postedAllocations.salesInvoice', 'costAllocations.stockMovement', 'costAllocations.quarantineReceipt', 'costAllocations.scrapReceipt']);
 
                             return [Section::make(__('Line details'))->schema($lines)->columns(['default' => 1, 'sm' => 2])];
                         }),

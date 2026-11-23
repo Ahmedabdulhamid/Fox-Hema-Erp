@@ -62,6 +62,6 @@ class VendorBillItem extends Model
 
     public function receiptMatches(): HasMany
     {
-        return $this->hasMany(VendorBillReceiptMatch::class, 'vendor_bill_item_id');
+        return $this->hasMany(VendorBillReceiptMatch::class, 'vendor_bill_item_id')->chaperone('vendorBillItem');
     }
 }

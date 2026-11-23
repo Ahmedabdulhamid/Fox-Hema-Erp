@@ -11,6 +11,7 @@ use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPostingService;
 use App\Modules\InventoryCosting\Services\SalesReturnValuationService;
 use App\Modules\InventoryCosting\Services\StockIssueValuationService;
+use App\Modules\Reporting\Services\ProfitabilityInvalidation;
 use App\Modules\Sales\Models\SalesInvoiceDeliveryMatch;
 use App\Modules\Sales\Models\SalesReturn;
 use App\Modules\Sales\Models\SalesReturnCostAllocation;
@@ -67,6 +68,7 @@ class SalesReturnPostingService
             DB::table('sales_returns')->where('id', $return->id)->update(['posting_evidence_hash' => $this->evidenceHash($return)]);
             $this->verifyPosted($return->refresh());
             $this->returns->audit($actor, $return, 'sales_return_posted');
+            app(ProfitabilityInvalidation::class)->posted('sales_returns', (int) $return->id);
 
             return $return->load('costAllocations.stockMovement.inventoryCostEntry', 'postedAllocations', 'quantityClaims');
         }, 3);

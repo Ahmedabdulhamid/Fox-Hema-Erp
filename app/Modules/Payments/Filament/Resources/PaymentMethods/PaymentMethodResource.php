@@ -76,6 +76,8 @@ class PaymentMethodResource extends Resource
                 ->options(static::types())->required()->disabledOn('edit')->dehydrated(fn (string $operation): bool => $operation === 'create')
                 ->helperText(__('payment_methods.type_help')),
             Toggle::make('is_active')->label(__('payment_methods.fields.is_active'))->default(true),
+            Toggle::make('available_in_pos')->label(__('payment_methods.fields.available_in_pos'))
+                ->helperText(__('payment_methods.available_in_pos_help'))->default(true),
             Toggle::make('requires_reference')->label(__('payment_methods.fields.requires_reference'))->default(false),
             TextInput::make('sort_order')->label(__('payment_methods.fields.sort_order'))->validationAttribute(__('payment_methods.fields.sort_order'))
                 ->integer()->minValue(0)->maxValue(4294967295)->default(0)->required(),
@@ -90,6 +92,8 @@ class PaymentMethodResource extends Resource
             TextEntry::make('type')->label(__('payment_methods.fields.type'))->formatStateUsing(fn (string $state): string => __('payment_methods.types.'.$state)),
             TextEntry::make('is_active')->label(__('payment_methods.fields.is_active'))->badge()
                 ->formatStateUsing(fn (bool $state): string => __('payment_methods.status.'.($state ? 'active' : 'inactive'))),
+            TextEntry::make('available_in_pos')->label(__('payment_methods.fields.available_in_pos'))
+                ->formatStateUsing(fn (bool $state): string => __($state ? 'payment_methods.yes' : 'payment_methods.no')),
             TextEntry::make('requires_reference')->label(__('payment_methods.fields.requires_reference'))
                 ->formatStateUsing(fn (bool $state): string => __('payment_methods.'.($state ? 'yes' : 'no'))),
             TextEntry::make('sort_order')->label(__('payment_methods.fields.sort_order')),
@@ -118,6 +122,7 @@ class PaymentMethodResource extends Resource
             TextColumn::make('type')->label(__('payment_methods.fields.type'))->formatStateUsing(fn (string $state): string => __('payment_methods.types.'.$state))->sortable(),
             TextColumn::make('is_active')->label(__('payment_methods.fields.is_active'))->badge()->sortable()
                 ->formatStateUsing(fn (bool $state): string => __('payment_methods.status.'.($state ? 'active' : 'inactive'))),
+            IconColumn::make('available_in_pos')->label(__('payment_methods.fields.available_in_pos'))->boolean(),
             IconColumn::make('requires_reference')->label(__('payment_methods.fields.requires_reference'))->boolean(),
             TextColumn::make('sort_order')->label(__('payment_methods.fields.sort_order'))->sortable(),
         ])->filters([

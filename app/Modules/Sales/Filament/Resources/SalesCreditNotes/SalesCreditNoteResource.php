@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sales\Filament\Resources\SalesCreditNotes;
 
+use App\Filament\RequestDisplayData;
 use App\Modules\Payments\Filament\CustomerSettlementActions;
 use App\Modules\Payments\Models\PaymentRefund;
 use App\Modules\Payments\Services\CustomerRefunds;
@@ -25,6 +26,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 
 class SalesCreditNoteResource extends Resource
 {
@@ -116,7 +118,12 @@ class SalesCreditNoteResource extends Resource
                 ->state(fn ($record) => app(CustomerRefunds::class)->creditBalance(auth()->user(), $record)['refunded']),
             RepeatableEntry::make('refunds')->label(__('payments.fields.refunds'))
                 ->visible(fn ($record) => CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id))
-                ->state(fn ($record) => PaymentRefund::where('sales_credit_note_id', $record->id)->with('payment.paymentMethod')->get())
+                ->state(function (SalesCreditNote $record): Collection {
+                    abort_unless(CustomerSettlementActions::can(PaymentsPermissions::VIEW, (int) $record->location_id), 403);
+
+                    return RequestDisplayData::remember('sales-credit-note.refunds.'.$record->id,
+                        fn (): Collection => PaymentRefund::where('sales_credit_note_id', $record->id)->with('payment.paymentMethod')->get());
+                })
                 ->schema([
                     TextEntry::make('refund_number')->label(__('payments.fields.refund_number')),
                     TextEntry::make('payment.payment_number')->label(__('payments.original_receipt')),
@@ -141,6 +148,7 @@ class SalesCreditNoteResource extends Resource
             TextColumn::make('status')->label(__('invoices.status'))->badge()->color(fn ($state): string => $state === 'posted' ? 'success' : 'warning')->formatStateUsing(fn ($state) => __('invoices.'.$state)),
             TextColumn::make('total_amount')->label(__('credits.total'))->alignEnd()->weight('bold'),
         ])->filters([SelectFilter::make('status')->options(['draft' => __('invoices.draft'), 'posted' => __('invoices.posted')])])
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->without('items'))
             ->recordActions([ViewAction::make(), EditAction::make(), SalesCreditNoteActions::post(), SalesCreditNoteActions::download('ar'), SalesCreditNoteActions::download('en')])
             ->defaultSort('id', 'desc')->toolbarActions([]);
     }

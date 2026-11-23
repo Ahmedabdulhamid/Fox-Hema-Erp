@@ -4,6 +4,7 @@ namespace App\Modules\Sales\Policies;
 
 use App\Modules\AccessManagement\Models\User;
 use App\Modules\AccessManagement\Services\ModuleAccess;
+use App\Modules\AccessManagement\Services\RequestAuthorizationFacts;
 use App\Modules\Inventory\Services\InventoryAccess;
 use App\Modules\Inventory\Services\InventoryPermissions;
 use App\Modules\Sales\Models\SalesReturn;
@@ -65,10 +66,21 @@ class SalesReturnPolicy
         return false;
     }
 
+    private function hasCreditHistory(SalesReturn $return): bool
+    {
+        $facts = RequestAuthorizationFacts::readFacts('sales-return-credit-history:'.$return->id);
+        if ($facts !== null) {
+            return (bool) $facts[0] || (bool) $facts[1];
+        }
+
+        return RequestAuthorizationFacts::remember('sales-return-has-credit-history:'.$return->id,
+            fn (): bool => $return->creditNotes()->exists() || $return->items()->whereHas('creditNoteItems')->exists());
+    }
+
     private function clean(SalesReturn $return): bool
     {
         return $return->submission_payload_hash !== null && $return->posted_at === null && $return->posted_by === null
             && $return->cancelled_at === null && $return->cancelled_by === null
-            && ! $return->creditNotes()->exists() && ! $return->items()->whereHas('creditNoteItems')->exists();
+            && ! $this->hasCreditHistory($return);
     }
 }

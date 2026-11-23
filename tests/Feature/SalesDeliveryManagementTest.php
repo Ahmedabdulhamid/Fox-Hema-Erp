@@ -227,6 +227,7 @@ class SalesDeliveryManagementTest extends TestCase
         $this->assertSame($cancelled->getAttributes(), $this->service->cancel($this->actor, $delivery, $revision)->getAttributes());
         $this->assertSame($this->actor->id, $cancelled->cancelled_by);
         $this->assertFalse($order->hasDownstreamDocuments());
+        $this->assertFalse(SalesOrder::query()->withRowActionFacts()->findOrFail($order->id)->hasDownstreamDocuments());
         $this->assertTrue(Gate::allows('cancel', $order->fresh()));
         $this->assertSame('cancelled', app(SalesOrderConfirmationService::class)->cancel($this->actor, $order)->status);
         $this->assertSame('10.0000', $order->reservations()->first()->quantity_released);
@@ -240,6 +241,7 @@ class SalesDeliveryManagementTest extends TestCase
         $this->service->cancel($this->actor, $delivery, $this->service->revision($delivery));
         DB::table('sales_deliveries')->where('id', $delivery->id)->update(['notes' => 'tampered']);
         $this->assertTrue($order->hasDownstreamDocuments());
+        $this->assertTrue(SalesOrder::query()->withRowActionFacts()->findOrFail($order->id)->hasDownstreamDocuments());
         $this->reject(fn () => app(SalesOrderConfirmationService::class)->cancel($this->actor, $order));
         DB::table('sales_deliveries')->where('id', $delivery->id)->update(['status' => 'posted']);
         $this->reject(fn () => $this->service->cancel($this->actor, $delivery, $this->service->revision($delivery->fresh())));

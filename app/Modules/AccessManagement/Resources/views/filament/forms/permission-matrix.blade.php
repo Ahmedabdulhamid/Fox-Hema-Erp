@@ -4,7 +4,7 @@
             search: '',
             selected: $wire.entangle(@js($getStatePath())).live,
             readOnly: @js($isDisabled()),
-            searchIndex: @js(collect($permissionGroups)->map(fn ($permissions, $group) => __($group).' '.collect($permissions)->map(fn ($permission) => $permission['name'].' '.$permission['label'])->implode(' '))->values()->all()),
+            searchIndex: @js(collect($permissionGroups)->map(fn ($permissions, $group) => $group.' '.collect($permissions)->map(fn ($permission) => $permission['name'].' '.$permission['label'])->implode(' '))->values()->all()),
             expansion: { version: 0, open: true },
             normalized() { return [...new Set(Object.values(this.selected || []).map(Number).filter(id => Number.isInteger(id) && id > 0))] },
             has(id) { return this.normalized().includes(Number(id)) },
@@ -42,7 +42,7 @@
             @forelse ($permissionGroups as $group => $permissions)
                 @php
                     $ids = collect($permissions)->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
-                    $moduleLabel = __($group);
+                    $moduleLabel = $group;
                     $searchable = collect($permissions)->map(fn ($permission) => $permission['name'].' '.$permission['label'])->implode(' ');
                 @endphp
                 <section class="fox-permission-module" wire:key="permission-module-{{ md5($getStatePath().$group) }}"

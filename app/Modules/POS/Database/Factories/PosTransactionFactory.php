@@ -15,6 +15,8 @@ class PosTransactionFactory extends Factory
     public function definition(): array
     {
         return [
+            'schema_version' => 1,
+            'source_pos_transaction_id' => null,
             'pos_session_id' => PosSession::factory(),
             'pos_device_id' => fn (array $attributes): int => PosSession::findOrFail($attributes['pos_session_id'])->pos_device_id,
             'location_id' => fn (array $attributes): int => PosSession::findOrFail($attributes['pos_session_id'])->location_id,

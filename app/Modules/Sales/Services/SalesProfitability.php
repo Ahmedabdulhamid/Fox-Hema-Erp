@@ -47,7 +47,7 @@ class SalesProfitability
 
     public function order(User $actor, SalesOrder $order): array
     {
-        $order = SalesOrder::findOrFail($order->id);
+        $order = SalesOrder::without('documentNumber')->findOrFail($order->id);
         abort_unless($this->canView($actor, (int) $order->location_id), 403);
         $items = $order->items()->orderBy('id')->get();
         if ($order->confirmed_at === null && $order->status === 'draft') {
