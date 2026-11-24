@@ -294,25 +294,29 @@ class StockBalanceConstraintMigrationTest extends TestCase
         $this->assertDatabaseCount('stock_balances', 0);
     }
 
-    /** @return array<string, array{string, string}> */
+    /** @return array<string, array{string}> */
     public static function unsupportedVersions(): array
     {
-        return ['mysql 5.7' => ['5.7.44', 'MySQL Community Server'], 'mysql old checks' => ['8.0.15', 'MySQL Community Server'],
-            'mariadb missing metadata' => ['10.3.9-MariaDB', 'mariadb.org binary distribution'],
-            'compatibility prefix' => ['5.5.5-10.3.9-MariaDB', 'mariadb.org binary distribution'],
-            'unknown vendor' => ['8.0.46', 'Unknown SQL vendor']];
+        return [
+            'mysql 5.7' => ['5.7.44'],
+            'ubuntu mysql before enforcement' => ['8.0.15-0ubuntu0.24.04.5'],
+            'mariadb before enforcement' => ['10.3.9-MariaDB'],
+            'mariadb compatibility prefix before enforcement' => ['5.5.5-10.3.9-MariaDB'],
+            'unparseable mysql' => ['8.0'],
+            'unparseable mariadb' => ['MariaDB 10.3.10'],
+        ];
     }
 
     #[DataProvider('unsupportedVersions')]
-    public function test_unsupported_server_responses_fail_before_ddl(string $version, string $comment): void
+    public function test_unsupported_server_responses_fail_before_ddl(string $version): void
     {
         $manager = DB::getFacadeRoot();
         $connection = DB::connection();
         $mock = DB::partialMock();
         $mock->shouldReceive('getDriverName')->andReturn('mysql');
         $mock->shouldReceive('connection')->andReturn($connection);
-        $mock->shouldReceive('selectOne')->with('SELECT VERSION() AS version, @@version_comment AS comment')
-            ->andReturn((object) ['version' => $version, 'comment' => $comment]);
+        $mock->shouldReceive('selectOne')->with('SELECT VERSION() AS version')
+            ->andReturn((object) ['version' => $version]);
         try {
             $this->rejectMigration(fn () => $this->stockBalanceMigration()->up(), 'Unsupported stock balance CHECK server');
         } finally {
@@ -340,8 +344,8 @@ class StockBalanceConstraintMigrationTest extends TestCase
         $mock = DB::partialMock();
         $mock->shouldReceive('getDriverName')->andReturn('mysql');
         $mock->shouldReceive('connection')->andReturn($connection);
-        $mock->shouldReceive('selectOne')->with('SELECT VERSION() AS version, @@version_comment AS comment')
-            ->andReturn((object) ['version' => '10.4.32-MariaDB', 'comment' => 'mariadb.org']);
+        $mock->shouldReceive('selectOne')->with('SELECT VERSION() AS version')
+            ->andReturn((object) ['version' => '10.4.32-MariaDB']);
         $mock->shouldReceive('selectOne')->with('SELECT @@SESSION.check_constraint_checks AS session_checks, @@GLOBAL.check_constraint_checks AS global_checks')
             ->andReturn((object) ['session_checks' => 0, 'global_checks' => 1]);
         try {

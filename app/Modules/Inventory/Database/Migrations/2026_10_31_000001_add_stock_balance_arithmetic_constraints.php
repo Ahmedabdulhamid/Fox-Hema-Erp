@@ -68,14 +68,8 @@ return new class extends Migration
         if (DB::connection()->getTablePrefix() !== '') {
             throw new RuntimeException('Stock balance constraints require the unprefixed project schema; review custom table prefixes separately.');
         }
-        $server = DB::selectOne('SELECT VERSION() AS version, @@version_comment AS comment');
-        $maria = str_contains(strtolower($server->version), 'mariadb');
-        $pattern = $maria ? '/^(?:5\.5\.5-)?(\d+\.\d+\.\d+)-MariaDB/i' : '/^(\d+\.\d+\.\d+)(?:[-.].*)?$/D';
-        if (! preg_match($pattern, $server->version, $match)
-            || (! $maria && ! str_contains(strtolower($server->comment), 'mysql'))
-            || version_compare($match[1], $maria ? '10.3.10' : '8.0.16', '<')) {
-            throw new RuntimeException('Unsupported stock balance CHECK server: '.$server->version.'. Requires MySQL 8.0.16+ or MariaDB 10.3.10+ with inspectable enforced checks.');
-        }
+        $server = DB::selectOne('SELECT VERSION() AS version');
+        $maria = $this->validateServerVersion((string) $server->version);
         if ($maria) {
             $settings = DB::selectOne('SELECT @@SESSION.check_constraint_checks AS session_checks, @@GLOBAL.check_constraint_checks AS global_checks');
             if ((int) $settings->session_checks !== 1 || (int) $settings->global_checks !== 1) {
@@ -95,6 +89,18 @@ return new class extends Migration
                 || ! preg_match("/^'?0(?:\\.0{1,4})?'?$/D", (string) $column->COLUMN_DEFAULT) || $column->EXTRA !== '') {
                 throw new RuntimeException('Unexpected stock balance column definition: '.$column->COLUMN_NAME.'. Expected signed DECIMAL(18,4) NOT NULL DEFAULT 0 without generated expressions.');
             }
+        }
+
+        return $maria;
+    }
+
+    private function validateServerVersion(string $version): bool
+    {
+        $maria = str_contains(strtolower($version), 'mariadb');
+        $pattern = $maria ? '/^(?:5\.5\.5-)?(\d+\.\d+\.\d+)-MariaDB/i' : '/^(\d+\.\d+\.\d+)(?:[-.].*)?$/D';
+        if (! preg_match($pattern, $version, $match)
+            || version_compare($match[1], $maria ? '10.3.10' : '8.0.16', '<')) {
+            throw new RuntimeException('Unsupported stock balance CHECK server: '.$version.'. Requires MySQL 8.0.16+ or MariaDB 10.3.10+ with inspectable enforced checks.');
         }
 
         return $maria;
