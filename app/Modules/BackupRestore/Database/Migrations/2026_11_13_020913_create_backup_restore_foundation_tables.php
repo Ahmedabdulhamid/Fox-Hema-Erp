@@ -83,8 +83,8 @@ return new class extends Migration
             $table->foreignId('backup_run_id')->constrained('backup_runs')->restrictOnDelete();
             $table->enum('mode', ['verify_only', 'production']);
             $table->enum('status', ['requested', 'verifying', 'verified', 'approved', 'restoring', 'completed', 'failed', 'cancelled'])->default('requested');
-            $table->foreignId('requested_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('requested_by')->nullable()->constrained('users')->restrictOnDelete();
+            $table->foreignId('approved_by')->nullable()->constrained('users')->restrictOnDelete();
             $table->char('artifact_checksum', 64)->nullable();
             $table->string('target_identifier', 100);
             $table->json('verification_findings')->nullable();
