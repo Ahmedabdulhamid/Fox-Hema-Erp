@@ -17,16 +17,14 @@ class ProductImportStorage
             throw new RuntimeException('Invalid import identity.');
         }
         $root = config('product-import.root');
-        if (! is_dir($root) && ! mkdir($root, 0700, true) && ! is_dir($root)) {
-            throw new RuntimeException('Private import storage is unavailable.');
-        }
+        $this->ensureSharedDirectory($root, true, 'Private import storage is unavailable.');
+        $this->ensureSharedPermissions($root);
         $directory = $root.DIRECTORY_SEPARATOR.$import->uuid;
-        if (! is_dir($directory) && ! mkdir($directory, 0700, true) && ! is_dir($directory)) {
-            throw new RuntimeException('Private import directory is unavailable.');
-        }
+        $this->ensureSharedDirectory($directory, true, 'Private import directory is unavailable.');
         if (! str_starts_with(realpath($directory).DIRECTORY_SEPARATOR, realpath($root).DIRECTORY_SEPARATOR)) {
             throw new RuntimeException('Unsafe import directory.');
         }
+        $this->ensureSharedPermissions($directory);
 
         return $directory;
     }
@@ -43,24 +41,55 @@ class ProductImportStorage
     public function parserDirectory(ProductImport $import): string
     {
         $directory = $this->directory($import).DIRECTORY_SEPARATOR.'parser';
-        if (! is_dir($directory) && ! mkdir($directory, 0700) && ! is_dir($directory)) {
-            throw new RuntimeException('Private parser directory is unavailable.');
-        }
+        $this->ensureSharedDirectory($directory, false, 'Private parser directory is unavailable.');
         if (! str_starts_with(realpath($directory).DIRECTORY_SEPARATOR, realpath($this->directory($import)).DIRECTORY_SEPARATOR)) {
             throw new RuntimeException('Unsafe parser directory.');
         }
+        $this->ensureSharedPermissions($directory);
 
         return $directory;
+    }
+
+    private function ensureSharedDirectory(string $directory, bool $recursive, string $failure): void
+    {
+        if (is_link($directory) || (! is_dir($directory) && ! mkdir($directory, 0770, $recursive) && ! is_dir($directory))) {
+            throw new RuntimeException($failure);
+        }
+    }
+
+    private function ensureSharedPermissions(string $directory): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return;
+        }
+
+        clearstatcache(true, $directory);
+        $permissions = fileperms($directory);
+        if ($permissions === false) {
+            throw new RuntimeException('Shared import directory permissions are unavailable.');
+        }
+        if (($permissions & 0777) === 0770) {
+            return;
+        }
+        if (function_exists('posix_geteuid') && fileowner($directory) !== posix_geteuid()) {
+            throw new RuntimeException('Shared import directory permissions require owner repair.');
+        }
+
+        $mode = ($permissions & 02000) | 0770;
+        if (! chmod($directory, $mode)) {
+            throw new RuntimeException('Shared import directory permissions could not be updated.');
+        }
     }
 
     /** Exclusive writes with a durable flush; the caller retains the immutable upload on retry. */
     public function write(string $path, string $bytes): void
     {
-        $stream = fopen($path, 'xb');
+        $stream = @fopen($path, 'xb');
         if ($stream === false) {
             throw new RuntimeException('Import file could not be allocated.');
         }
         try {
+            $this->ensureSharedFilePermissions($path);
             if (fwrite($stream, $bytes) !== strlen($bytes) || ! fflush($stream) || ! fsync($stream)) {
                 throw new RuntimeException('Import file could not be persisted.');
             }
@@ -72,17 +101,46 @@ class ProductImportStorage
     public function stage(ProductImport $import, UploadedFile $upload, string $name): void
     {
         $source = fopen($upload->getRealPath(), 'rb');
-        $target = fopen($this->path($import, $name), 'xb');
-        if ($source === false || $target === false) {
+        if ($source === false) {
+            throw new RuntimeException('Import staging failed.');
+        }
+
+        $path = $this->path($import, $name);
+        $target = @fopen($path, 'xb');
+        if ($target === false) {
+            fclose($source);
             throw new RuntimeException('Import staging failed.');
         }
         try {
+            $this->ensureSharedFilePermissions($path);
             if (stream_copy_to_stream($source, $target) !== $upload->getSize() || ! fflush($target) || ! fsync($target)) {
                 throw new RuntimeException('Import staging failed.');
             }
         } finally {
             fclose($source);
             fclose($target);
+        }
+    }
+
+    private function ensureSharedFilePermissions(string $path): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return;
+        }
+
+        clearstatcache(true, $path);
+        $permissions = fileperms($path);
+        if ($permissions === false) {
+            throw new RuntimeException('Shared import file permissions are unavailable.');
+        }
+        if (($permissions & 0777) === 0660) {
+            return;
+        }
+        if (function_exists('posix_geteuid') && fileowner($path) !== posix_geteuid()) {
+            throw new RuntimeException('Shared import file permissions require owner repair.');
+        }
+        if (! chmod($path, 0660)) {
+            throw new RuntimeException('Shared import file permissions could not be updated.');
         }
     }
 

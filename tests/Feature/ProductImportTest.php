@@ -21,6 +21,7 @@ use App\Modules\Products\Services\ProductImageManager;
 use App\Modules\Products\Services\ProductImportAccess;
 use App\Modules\Products\Services\ProductImportManager;
 use App\Modules\Products\Services\ProductImportProcessor;
+use App\Modules\Products\Services\ProductImportStorage;
 use App\Modules\Products\Services\ProductImportWorkbook;
 use App\Modules\Products\Services\ProductPermissions;
 use App\Modules\Products\Services\ProductsAccess;
@@ -822,5 +823,115 @@ class ProductImportTest extends TestCase
         $this->assertSame('completed', $import->fresh()->status);
         $this->assertDatabaseCount('products', 2);
         $this->assertDatabaseCount('product_images', 1);
+    }
+
+    public function test_import_storage_directories_are_group_shared_and_writes_remain_exclusive(): void
+    {
+        $root = config('product-import.root');
+        $previousUmask = umask(0000);
+
+        try {
+            $import = new ProductImport(['uuid' => (string) Str::uuid()]);
+            $storage = app(ProductImportStorage::class);
+            $directory = $storage->directory($import);
+            $parserDirectory = $storage->parserDirectory($import);
+
+            if (PHP_OS_FAMILY !== 'Windows') {
+                foreach ([$root, $directory, $parserDirectory] as $sharedDirectory) {
+                    $permissions = fileperms($sharedDirectory);
+                    $this->assertSame(0770, $permissions & 0777);
+                    $this->assertSame(0, $permissions & 0007);
+                }
+            }
+
+            $path = $storage->path($import, 'source.xlsx');
+            $storage->write($path, 'original');
+            $stagedName = (string) Str::uuid().'.asset';
+            $storage->stage($import, $this->image(), $stagedName);
+            $stagedPath = $storage->path($import, $stagedName);
+
+            if (PHP_OS_FAMILY !== 'Windows') {
+                foreach ([$path, $stagedPath] as $privateFile) {
+                    $permissions = fileperms($privateFile);
+                    $this->assertSame(0660, $permissions & 0777);
+                    $this->assertSame(0, $permissions & 0007);
+                }
+            }
+
+            try {
+                $storage->write($path, 'replacement');
+                $this->fail('Existing import files must not be overwritten.');
+            } catch (\RuntimeException $exception) {
+                $this->assertSame('Import file could not be allocated.', $exception->getMessage());
+            }
+
+            try {
+                $storage->path($import, '../outside');
+                $this->fail('Import paths must reject traversal segments.');
+            } catch (\RuntimeException $exception) {
+                $this->assertSame('Unsafe import filename.', $exception->getMessage());
+            }
+
+            try {
+                $storage->directory(new ProductImport(['uuid' => '../outside']));
+                $this->fail('Import directories must require a UUID identity.');
+            } catch (\RuntimeException $exception) {
+                $this->assertSame('Invalid import identity.', $exception->getMessage());
+            }
+        } finally {
+            umask($previousUmask);
+            File::deleteDirectory($root);
+        }
+    }
+
+    public function test_inherited_acl_allows_fpm_and_worker_users_to_share_private_import_files(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || ! function_exists('posix_geteuid') || posix_geteuid() !== 0
+            || ! function_exists('posix_getpwnam') || posix_getpwnam('www-data') === false || posix_getpwnam('deploy') === false) {
+            $this->markTestSkipped('Cross-user ACL integration requires Linux root and the www-data and deploy accounts.');
+        }
+
+        foreach (['setfacl', 'getfacl', 'runuser', 'php'] as $command) {
+            $probe = new Process(['sh', '-lc', 'command -v '.$command]);
+            if (! $probe->run() || $probe->getExitCode() !== 0) {
+                $this->markTestSkipped('Cross-user ACL integration requires setfacl, getfacl, runuser, and PHP CLI.');
+            }
+        }
+
+        $root = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'product-import-acl-'.Str::uuid();
+        config(['product-import.root' => $root]);
+        File::makeDirectory($root, 0700, true);
+        try {
+            (new Process(['setfacl', '-m', 'u:www-data:rwx,u:deploy:rwx,g::rwx,m:rwx,o:---,d:u:www-data:rwx,d:u:deploy:rwx,d:g::rwx,d:m:rwx,d:o:---', $root]))->mustRun();
+
+            $import = new ProductImport(['uuid' => (string) Str::uuid()]);
+            $storage = app(ProductImportStorage::class);
+            $storage->directory($import);
+            $parserDirectory = $storage->parserDirectory($import);
+            $acl = (new Process(['getfacl', '-cp', $parserDirectory]))->mustRun()->getOutput();
+            $this->assertStringContainsString('default:user:www-data:rwx', $acl);
+            $this->assertStringContainsString('default:user:deploy:rwx', $acl);
+            $this->assertStringContainsString('default:mask::rwx', $acl);
+
+            $workerFile = $parserDirectory.DIRECTORY_SEPARATOR.'worker-created.xlsx';
+            $create = '$stream=fopen($argv[1],"xb"); if ($stream===false || fwrite($stream,"worker")!==6) { exit(1); } fclose($stream);';
+            (new Process(['runuser', '-u', 'deploy', '--', 'php', '-r', $create, $workerFile]))->mustRun();
+            $read = 'if (file_get_contents($argv[1]) !== "worker") { exit(1); }';
+            (new Process(['runuser', '-u', 'www-data', '--', 'php', '-r', $read, $workerFile]))->mustRun();
+
+            $fpmFile = $parserDirectory.DIRECTORY_SEPARATOR.'fpm-created.xlsx';
+            $createFpmFile = '$stream=fopen($argv[1],"xb"); if ($stream===false || fwrite($stream,"fpm")!==3) { exit(1); } fclose($stream);';
+            (new Process(['runuser', '-u', 'www-data', '--', 'php', '-r', $createFpmFile, $fpmFile]))->mustRun();
+            $readFpmFile = 'if (file_get_contents($argv[1]) !== "fpm") { exit(1); }';
+            (new Process(['runuser', '-u', 'deploy', '--', 'php', '-r', $readFpmFile, $fpmFile]))->mustRun();
+
+            foreach ([$workerFile, $fpmFile] as $sharedFile) {
+                $permissions = fileperms($sharedFile);
+                $this->assertSame(0660, $permissions & 0777);
+                $this->assertSame(0, $permissions & 0007);
+            }
+        } finally {
+            File::deleteDirectory($root);
+        }
     }
 }

@@ -82,12 +82,7 @@ class ProductImageManager
             'image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', default => throw new \RuntimeException('Unsupported image content.')
         };
         $disk = Storage::disk('public');
-        $disk->makeDirectory($directory);
-        $root = realpath($disk->path(''));
-        $parent = realpath($disk->path($directory));
-        if ($root === false || $parent === false || ! str_starts_with($parent, $root.DIRECTORY_SEPARATOR)) {
-            throw new \RuntimeException('Unsafe media directory.');
-        }
+        $this->ensureSharedDirectory($disk->path(''), $directory);
         $path = $directory.'/'.Str::uuid().'.'.$extension;
         app(ProductImportImageAllocation::class)->record($path);
         $output = @fopen($disk->path($path), 'xb');
@@ -115,6 +110,55 @@ class ProductImageManager
         fclose($output);
 
         return $path;
+    }
+
+    private function ensureSharedDirectory(string $root, string $directory): string
+    {
+        $resolvedRoot = realpath($root);
+        if ($resolvedRoot === false) {
+            throw new \RuntimeException('Shared media storage is unavailable.');
+        }
+
+        $current = $resolvedRoot;
+        foreach (explode('/', $directory) as $segment) {
+            $parent = $current;
+            $current = $parent.DIRECTORY_SEPARATOR.$segment;
+            if (is_link($current) || (! is_dir($current) && ! mkdir($current, 0770) && ! is_dir($current))) {
+                throw new \RuntimeException('Shared media directory is unavailable.');
+            }
+            $resolved = realpath($current);
+            if ($resolved === false || dirname($resolved) !== $parent) {
+                throw new \RuntimeException('Unsafe media directory.');
+            }
+            $this->ensureSharedDirectoryPermissions($resolved);
+            $current = $resolved;
+        }
+
+        return $current;
+    }
+
+    private function ensureSharedDirectoryPermissions(string $directory): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return;
+        }
+
+        clearstatcache(true, $directory);
+        $permissions = fileperms($directory);
+        if ($permissions === false) {
+            throw new \RuntimeException('Shared media directory permissions are unavailable.');
+        }
+        if (($permissions & 0777) === 0770) {
+            return;
+        }
+        if (function_exists('posix_geteuid') && fileowner($directory) !== posix_geteuid()) {
+            throw new \RuntimeException('Shared media directory permissions require owner repair.');
+        }
+
+        $mode = ($permissions & 02000) | 0770;
+        if (! chmod($directory, $mode)) {
+            throw new \RuntimeException('Shared media directory permissions could not be updated.');
+        }
     }
 
     private function cleanupRolledBackUpload(string $path): void

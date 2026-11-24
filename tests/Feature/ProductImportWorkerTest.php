@@ -253,6 +253,13 @@ class ProductImportWorkerTest extends TestCase
         $image = Product::sole()->images()->sole();
         $orphan = app(ProductImportImageAllocation::class)->during($import,
             fn (): string => app(ProductImageManager::class)->storeImmutableUpload(UploadedFile::fake()->image('orphan.png'), 'products/'.$image->product_id));
+        if (PHP_OS_FAMILY !== 'Windows') {
+            foreach (['products', 'products/'.$image->product_id] as $directory) {
+                $permissions = fileperms(Storage::disk('public')->path($directory));
+                $this->assertSame(0770, $permissions & 0777);
+                $this->assertSame(0, $permissions & 0007);
+            }
+        }
         $run = BackupRun::factory()->create(['status' => 'available', 'verification_status' => 'checksum_verified', 'verified_at' => now(), 'completed_at' => now(),
             'object_key' => 'synthetic/import-fixture.fhbk', 'size_bytes' => 1, 'ciphertext_checksum' => str_repeat('a', 64), 'manifest_checksum' => str_repeat('b', 64),
             'destination_snapshot' => ['media_reference_version' => 1, 'media_references' => ['files/public/'.$orphan]]]);

@@ -409,9 +409,17 @@ class ProductExportTest extends TestCase
         $brand->update(['is_active' => true]);
         $service->run($export->id);
         $this->assertSame('completed', $export->fresh()->status);
-        $hash = hash_file('sha256', $service->archivePath($export->uuid));
+        $archivePath = $service->archivePath($export->uuid);
+        if (PHP_OS_FAMILY !== 'Windows') {
+            foreach ([$archivePath, $archivePath.'.ids'] as $sharedFile) {
+                $this->assertSame(0640, fileperms($sharedFile) & 0777);
+                $this->assertSame(0, fileperms($sharedFile) & 0007);
+            }
+            $this->assertSame(0770, fileperms(dirname($archivePath)) & 0777);
+        }
+        $hash = hash_file('sha256', $archivePath);
         $service->run($export->id);
-        $this->assertSame($hash, hash_file('sha256', $service->archivePath($export->uuid)));
+        $this->assertSame($hash, hash_file('sha256', $archivePath));
         $this->assertCount(2, Storage::disk('local')->allFiles('product-exports'));
     }
 

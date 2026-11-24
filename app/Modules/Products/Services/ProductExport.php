@@ -120,9 +120,44 @@ class ProductExport
     {
         abort_unless(Str::isUuid($token), 404);
 
-        Storage::disk('local')->makeDirectory('product-exports');
+        $disk = Storage::disk('local');
+        $root = realpath($disk->path(''));
+        $directory = $disk->path('product-exports');
+        if ($root === false || is_link($directory)
+            || (! is_dir($directory) && ! mkdir($directory, 0770) && ! is_dir($directory))) {
+            throw new RuntimeException('Cannot create private export storage.');
+        }
+        $resolvedDirectory = realpath($directory);
+        if ($resolvedDirectory === false || dirname($resolvedDirectory) !== $root) {
+            throw new RuntimeException('Unsafe export directory.');
+        }
+        $this->ensureSharedDirectoryPermissions($resolvedDirectory);
 
-        return Storage::disk('local')->path('product-exports/'.$token.'.zip');
+        return $disk->path('product-exports/'.$token.'.zip');
+    }
+
+    private function ensureSharedDirectoryPermissions(string $directory): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return;
+        }
+
+        clearstatcache(true, $directory);
+        $permissions = fileperms($directory);
+        if ($permissions === false) {
+            throw new RuntimeException('Shared export directory permissions are unavailable.');
+        }
+        if (($permissions & 0777) === 0770) {
+            return;
+        }
+        if (function_exists('posix_geteuid') && fileowner($directory) !== posix_geteuid()) {
+            throw new RuntimeException('Shared export directory permissions require owner repair.');
+        }
+
+        $mode = ($permissions & 02000) | 0770;
+        if (! chmod($directory, $mode)) {
+            throw new RuntimeException('Shared export directory permissions could not be updated.');
+        }
     }
 
     public function accessFingerprint(User $actor): string
@@ -170,7 +205,9 @@ class ProductExport
                 if ($manifest === false) {
                     throw new RuntimeException('Cannot allocate export manifest.');
                 }
-                chmod($manifestPath, 0600);
+                if (PHP_OS_FAMILY !== 'Windows' && ! chmod($manifestPath, 0640)) {
+                    throw new RuntimeException('Cannot set export manifest permissions.');
+                }
             }
             if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
                 throw new RuntimeException('Cannot open export archive.');
@@ -260,6 +297,9 @@ class ProductExport
                 throw new RuntimeException('Cannot finish export archive.');
             }
             $opened = false;
+            if (PHP_OS_FAMILY !== 'Windows' && ! chmod($path, 0640)) {
+                throw new RuntimeException('Cannot set export archive permissions.');
+            }
         } finally {
             if ($opened) {
                 $zip->close();
