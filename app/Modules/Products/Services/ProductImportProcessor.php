@@ -126,7 +126,7 @@ class ProductImportProcessor
             if (! $import->rows()->where('sheet', 'Products')->exists()) {
                 throw ValidationException::withMessages(['workbook' => __('product_import.empty_products')]);
             }
-            if ($import->rows()->groupBy('product_key')->havingRaw('COUNT(*) > ?', [1 + config('product-import.variants_per_product') + 40 + config('product-import.images_per_product')])->exists()) {
+            if ($import->rows()->select('product_key')->groupBy('product_key')->havingRaw('COUNT(*) > ?', [1 + config('product-import.variants_per_product') + 40 + config('product-import.images_per_product')])->exists()) {
                 throw ValidationException::withMessages(['workbook' => __('product_import.row_limit')]);
             }
             $parents = $import->rows()->where('sheet', 'Products')->select('product_key');
